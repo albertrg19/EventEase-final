@@ -1,0 +1,93 @@
+package handlers
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+
+	"venue-reservation/backend/internal/models"
+)
+
+type HallHandler struct{ db *gorm.DB }
+
+func NewHallHandler(db *gorm.DB) *HallHandler { return &HallHandler{db: db} }
+
+func (h *HallHandler) List(c *gin.Context) {
+	var items []models.EventHall
+	page, size := getPagination(c)
+	if err := h.db.Order("id asc").Limit(size).Offset((page - 1) * size).Find(&items).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list"})
+		return
+	}
+	c.JSON(http.StatusOK, items)
+}
+
+type hallUpsert struct {
+	Name        string  `json:"name" binding:"required"`
+	Location    string  `json:"location" binding:"required"`
+	Capacity    int     `json:"capacity"`
+	Description *string `json:"description"`
+	Price       float64 `json:"price"`
+	MaxCapacity int     `json:"max_capacity"`
+	Photo       *string `json:"photo"`
+}
+
+func (h *HallHandler) Create(c *gin.Context) {
+	var req hallUpsert
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	hall := models.EventHall{
+		Name: req.Name, Location: req.Location, Capacity: req.Capacity, Description: req.Description,
+		Price: req.Price, MaxCapacity: req.MaxCapacity, Photo: req.Photo,
+	}
+	if err := h.db.Create(&hall).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "could not create"})
+		return
+	}
+	c.JSON(http.StatusCreated, hall)
+}
+
+func (h *HallHandler) Get(c *gin.Context) {
+	var hall models.EventHall
+	if err := h.db.First(&hall, c.Param("id")).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	c.JSON(http.StatusOK, hall)
+}
+
+func (h *HallHandler) Update(c *gin.Context) {
+	var hall models.EventHall
+	if err := h.db.First(&hall, c.Param("id")).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	var req hallUpsert
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	hall.Name = req.Name
+	hall.Location = req.Location
+	hall.Capacity = req.Capacity
+	hall.Description = req.Description
+	hall.Price = req.Price
+	hall.MaxCapacity = req.MaxCapacity
+	hall.Photo = req.Photo
+	if err := h.db.Save(&hall).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "update failed"})
+		return
+	}
+	c.JSON(http.StatusOK, hall)
+}
+
+func (h *HallHandler) Delete(c *gin.Context) {
+	if err := h.db.Delete(&models.EventHall{}, c.Param("id")).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed"})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
