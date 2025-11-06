@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+    "os"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -116,6 +117,11 @@ func (h *UserHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
 	}
+    // Prevent modifying static super admin critical fields
+    superEmail := os.Getenv("SUPER_ADMIN_EMAIL")
+    if superEmail == "" {
+        superEmail = "admin@admin.com"
+    }
 
 	var req userUpdate
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -126,7 +132,11 @@ func (h *UserHandler) Update(c *gin.Context) {
 	if req.Name != nil {
 		user.Name = *req.Name
 	}
-	if req.Email != nil {
+    if req.Email != nil {
+        if user.Email == superEmail && *req.Email != user.Email {
+            c.JSON(http.StatusForbidden, gin.H{"error": "cannot change super admin email"})
+            return
+        }
 		// Check if email is already taken by another user
 		var existing models.User
 		if err := h.db.Where("email = ? AND id <> ?", *req.Email, user.ID).First(&existing).Error; err == nil {
@@ -138,7 +148,11 @@ func (h *UserHandler) Update(c *gin.Context) {
 	if req.Phone != nil {
 		user.Phone = req.Phone
 	}
-	if req.Role != nil {
+    if req.Role != nil {
+        if user.Email == superEmail && *req.Role != "admin" {
+            c.JSON(http.StatusForbidden, gin.H{"error": "cannot demote super admin"})
+            return
+        }
 		if *req.Role == "admin" {
 			user.Role = models.UserRoleAdmin
 		} else {
@@ -155,7 +169,20 @@ func (h *UserHandler) Update(c *gin.Context) {
 }
 
 func (h *UserHandler) Delete(c *gin.Context) {
-	if err := h.db.Delete(&models.User{}, c.Param("id")).Error; err != nil {
+    var user models.User
+    if err := h.db.First(&user, c.Param("id")).Error; err != nil {
+        c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+        return
+    }
+    superEmail := os.Getenv("SUPER_ADMIN_EMAIL")
+    if superEmail == "" {
+        superEmail = "admin@admin.com"
+    }
+    if user.Email == superEmail {
+        c.JSON(http.StatusForbidden, gin.H{"error": "cannot delete super admin"})
+        return
+    }
+    if err := h.db.Delete(&models.User{}, user.ID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed"})
 		return
 	}

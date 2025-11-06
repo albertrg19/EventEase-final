@@ -3,8 +3,11 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 
 	"venue-reservation/backend/internal/database"
 	"venue-reservation/backend/internal/handlers"
@@ -31,6 +34,9 @@ func main() {
 	); err != nil {
 		log.Fatalf("auto migration failed: %v", err)
 	}
+
+	// Ensure a static super admin exists
+	ensureSuperAdmin(db)
 
 	r := gin.Default()
 	r.Use(middleware.CORS())
@@ -112,4 +118,35 @@ func main() {
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("server failed: %v", err)
 	}
+}
+
+func ensureSuperAdmin(db *gorm.DB) {
+	// Use env or sensible dev defaults
+	email := os.Getenv("SUPER_ADMIN_EMAIL")
+	if email == "" {
+		email = "admin@admin.com"
+	}
+	password := os.Getenv("SUPER_ADMIN_PASSWORD")
+	if password == "" {
+		password = "admin123"
+	}
+
+	var u models.User
+	if err := db.Where("email = ?", email).First(&u).Error; err == nil {
+		// Make sure role is admin
+		if u.Role != models.UserRoleAdmin {
+			u.Role = models.UserRoleAdmin
+			_ = db.Save(&u).Error
+		}
+		return
+	}
+
+	hashed, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	user := models.User{
+		Name:     "Super Admin",
+		Email:    email,
+		Password: string(hashed),
+		Role:     models.UserRoleAdmin,
+	}
+	_ = db.Create(&user).Error
 }
