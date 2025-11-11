@@ -111,6 +111,80 @@ type userUpdate struct {
 	Role  *string `json:"role"`
 }
 
+// Allows an authenticated user (admin or customer) to update their own profile.
+// Password change is optional.
+type userSelfUpdate struct {
+	Name     *string `json:"name"`
+	Email    *string `json:"email"`
+	Phone    *string `json:"phone"`
+	Password *string `json:"password"`
+}
+
+func (h *UserHandler) UpdateSelf(c *gin.Context) {
+	userId, exists := c.Get("userId")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var user models.User
+	if err := h.db.First(&user, userId).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+
+	var req userSelfUpdate
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Super admin protection
+	superEmail := os.Getenv("SUPER_ADMIN_EMAIL")
+	if superEmail == "" {
+		superEmail = "admin@admin.com"
+	}
+
+	if req.Name != nil {
+		user.Name = *req.Name
+	}
+	if req.Email != nil {
+		if user.Email == superEmail && *req.Email != user.Email {
+			c.JSON(http.StatusForbidden, gin.H{"error": "cannot change super admin email"})
+			return
+		}
+		// Ensure email uniqueness
+		var existing models.User
+		if err := h.db.Where("email = ? AND id <> ?", *req.Email, user.ID).First(&existing).Error; err == nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "email already in use"})
+			return
+		}
+		user.Email = *req.Email
+	}
+	if req.Phone != nil {
+		user.Phone = req.Phone
+	}
+	if req.Password != nil && *req.Password != "" {
+		if len(*req.Password) < 6 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "password must be at least 6 characters"})
+			return
+		}
+		hashed, err := bcrypt.GenerateFromPassword([]byte(*req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update password"})
+			return
+		}
+		user.Password = string(hashed)
+	}
+
+	if err := h.db.Save(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "update failed"})
+		return
+	}
+	user.Password = ""
+	c.JSON(http.StatusOK, user)
+}
+
 func (h *UserHandler) Update(c *gin.Context) {
 	var user models.User
 	if err := h.db.First(&user, c.Param("id")).Error; err != nil {

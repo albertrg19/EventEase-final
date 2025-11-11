@@ -106,6 +106,8 @@ func main() {
 		{
 			// Get current user profile
 			secure.GET("/me", userHandler.GetCurrentUser)
+			// Update current user profile
+			secure.PUT("/me", userHandler.UpdateSelf)
 
 			// Bookings
 			secure.POST("/bookings", bookingHandler.Create)
