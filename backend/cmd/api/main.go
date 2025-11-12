@@ -41,6 +41,10 @@ func main() {
 	r := gin.Default()
 	r.Use(middleware.CORS())
 
+	// Serve uploaded files (local dev)
+	// Files saved under ./uploads will be accessible at /uploads/<filename>
+	r.Static("/uploads", "./uploads")
+
 	// Health
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -64,6 +68,7 @@ func main() {
 		invoiceHandler := handlers.NewInvoiceHandler(db)
 		bookingHandler := handlers.NewBookingHandler(db)
 		userHandler := handlers.NewUserHandler(db)
+		uploadHandler := handlers.NewUploadHandler()
 
 		api.GET("/categories", catHandler.List)
 		api.GET("/halls", hallHandler.List)
@@ -98,6 +103,9 @@ func main() {
 			admin.DELETE("/events/:id", eventHandler.Delete)
 
 			admin.POST("/invoices", invoiceHandler.Create)
+
+			// Uploads
+			admin.POST("/uploads/images", uploadHandler.Image)
 		}
 
 		// Authenticated routes (admin and customer)
