@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Building2, Calendar, Check, Eye, Users, Phone, Mail, Clock, Facebook, Twitter, Instagram, Linkedin, ChevronUp, Star, ArrowRight, Sparkles, MapPin } from 'lucide-react';
+import { Building2, Calendar, Check, Eye, Users, Phone, Mail, Clock, Facebook, Twitter, Instagram, Linkedin, ChevronUp, Star, ArrowRight, Sparkles, MapPin, Zap, Search, FileCheck, PartyPopper } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -630,6 +630,103 @@ export default function Home() {
               </div>
             </CardContent>
           </Card>
+        </div>
+      </section>
+
+      {/* How It Works Section */}
+      <section id="how-it-works" data-section className="py-24 px-4 bg-gradient-to-b from-gray-50 to-white relative overflow-hidden">
+        <div className="container mx-auto relative z-10">
+          <div className={`text-center mb-20 transition-all duration-1000 ${visibleSections.has('how-it-works') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}>
+            <div className="inline-flex items-center gap-2 mb-4 px-5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-xs font-bold uppercase tracking-wider rounded-full shadow-lg">
+              <Zap className="h-3 w-3" />
+              Simple Process
+            </div>
+            <h2 className="text-4xl md:text-6xl font-extrabold mb-6 bg-gradient-to-r from-blue-950 via-blue-800 to-blue-950 bg-clip-text text-transparent">
+              How It Works
+            </h2>
+            <p className="text-lg md:text-xl text-gray-600 max-w-3xl mx-auto leading-relaxed">
+              Book your perfect venue in just 4 simple steps
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-4 gap-8 max-w-7xl mx-auto">
+            {[
+              { icon: Search, title: 'Browse Venues', desc: 'Explore our collection of premium event halls and find the perfect match', color: 'from-blue-500 to-cyan-500' },
+              { icon: Calendar, title: 'Check Availability', desc: 'View real-time availability and select your preferred date', color: 'from-purple-500 to-pink-500' },
+              { icon: FileCheck, title: 'Submit Request', desc: 'Fill out the booking form with your event details', color: 'from-orange-500 to-red-500' },
+              { icon: PartyPopper, title: 'Celebrate!', desc: 'Get confirmed and enjoy your perfect event', color: 'from-green-500 to-emerald-500' }
+            ].map((step, i) => (
+              <div
+                key={i}
+                className={`relative text-center transition-all duration-1000 ${visibleSections.has('how-it-works') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}
+                style={{ transitionDelay: `${i * 150}ms` }}
+              >
+                {/* Connector Line */}
+                {i < 3 && (
+                  <div className="hidden md:block absolute top-16 left-[60%] w-[80%] h-1 bg-gradient-to-r from-gray-300 to-gray-200 z-0">
+                    <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-gray-400 rounded-full"></div>
+                  </div>
+                )}
+
+                {/* Step Number Badge */}
+                <div className="relative mb-6 inline-block">
+                  <div className={`w-32 h-32 mx-auto rounded-2xl bg-gradient-to-br ${step.color} p-1 shadow-xl transform hover:scale-110 hover:rotate-3 transition-all duration-300`}>
+                    <div className="w-full h-full bg-white rounded-xl flex items-center justify-center">
+                      <step.icon className="h-14 w-14 text-gray-700" />
+                    </div>
+                  </div>
+                  <div className="absolute -top-2 -right-2 w-10 h-10 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg">
+                    {i + 1}
+                  </div>
+                </div>
+
+                <h3 className="text-xl font-bold text-gray-900 mb-3">{step.title}</h3>
+                <p className="text-gray-600 text-sm leading-relaxed">{step.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Gallery Showcase */}
+      <section id="gallery" data-section className="py-24 px-4 bg-gradient-to-b from-white to-gray-50 relative overflow-hidden">
+        <div className="container mx-auto relative z-10">
+          <div className={`text-center mb-20 transition-all duration-1000 ${visibleSections.has('gallery') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}>
+            <div className="inline-flex items-center gap-2 mb-4 px-5 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 text-white text-xs font-bold uppercase tracking-wider rounded-full shadow-lg">
+              <Eye className="h-3 w-3" />
+              Visual Gallery
+            </div>
+            <h2 className="text-4xl md:text-6xl font-extrabold mb-6 bg-gradient-to-r from-blue-950 via-blue-800 to-blue-950 bg-clip-text text-transparent">
+              See Our Venues in Action
+            </h2>
+            <p className="text-lg md:text-xl text-gray-600 max-w-3xl mx-auto leading-relaxed">
+              Real events, real memories, real success stories
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-7xl mx-auto">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div
+                key={i}
+                className={`group relative overflow-hidden rounded-2xl aspect-square shadow-lg hover:shadow-2xl transition-all duration-500 transform hover:scale-105 ${visibleSections.has('gallery') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}
+                style={{ transitionDelay: `${i * 50}ms` }}
+              >
+                <div className={`w-full h-full bg-gradient-to-br ${
+                  i % 4 === 0 ? 'from-blue-400 to-blue-600' :
+                  i % 4 === 1 ? 'from-purple-400 to-purple-600' :
+                  i % 4 === 2 ? 'from-pink-400 to-pink-600' :
+                  'from-orange-400 to-orange-600'
+                }`}>
+                  <div className="absolute inset-0 flex items-center justify-center text-white/20">
+                    <Building2 className="h-20 w-20" />
+                  </div>
+                </div>
+                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end justify-center p-4">
+                  <p className="text-white font-semibold">Event Gallery {i + 1}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
