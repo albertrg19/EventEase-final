@@ -5,18 +5,26 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Calendar, Plus, User, Tag, List, Building2, Check, ChevronLeft, ChevronRight, Loader2, AlertCircle, X, CheckCircle2 } from 'lucide-react';
+import { Calendar, Plus, User, Tag, List, Building2, Check, ChevronLeft, ChevronRight, Loader2, AlertCircle, X, CheckCircle2, Clock } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { format, isSameDay, isSameMonth, startOfMonth, endOfMonth, eachDayOfInterval, getDay } from 'date-fns';
 
 interface Category {
-  id: number;
-  name: string;
+  ID: number;
+  Name: string;
+  Image?: string;
+  Description?: string;
 }
 
 interface Hall {
-  id: number;
-  name: string;
+  ID: number;
+  Name: string;
+  Photo?: string;
+  Capacity?: number;
+  MaxCapacity?: number;
+  Description?: string;
+  Location?: string;
+  Price?: number;
 }
 
 interface Booking {
@@ -48,9 +56,10 @@ export default function NewBookingPage() {
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [formData, setFormData] = useState({
     event_name: '',
-    event_type: '',
     event_category_id: 0,
     hall_id: 0,
+    start_time: '',
+    end_time: '',
   });
   const api = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
@@ -86,12 +95,14 @@ export default function NewBookingPage() {
       const res = await fetch(`${api}/api/categories`);
       if (res.ok) {
         const data = await res.json();
+        console.log('✅ Categories loaded from database:', data);
         setCategories(data || []);
       } else {
         showToast('Failed to load categories', 'error');
+        console.error('❌ Failed to fetch categories:', res.status);
       }
     } catch (error) {
-      console.error('Failed to fetch categories:', error);
+      console.error('❌ Failed to fetch categories:', error);
       showToast('Failed to load categories', 'error');
     }
   };
@@ -101,12 +112,14 @@ export default function NewBookingPage() {
       const res = await fetch(`${api}/api/halls`);
       if (res.ok) {
         const data = await res.json();
+        console.log('✅ Halls loaded from database:', data);
         setHalls(data || []);
       } else {
         showToast('Failed to load halls', 'error');
+        console.error('❌ Failed to fetch halls:', res.status);
       }
     } catch (error) {
-      console.error('Failed to fetch halls:', error);
+      console.error('❌ Failed to fetch halls:', error);
       showToast('Failed to load halls', 'error');
     }
   };
@@ -143,7 +156,7 @@ export default function NewBookingPage() {
 
   const getAvailableHalls = (): Hall[] => {
     if (!selectedDate) return halls;
-    return halls.filter((hall) => isHallAvailable(hall.id, selectedDate));
+    return halls.filter((hall) => isHallAvailable(hall.ID, selectedDate));
   };
 
   const handleDateClick = (date: Date) => {
@@ -164,14 +177,20 @@ export default function NewBookingPage() {
     if (!formData.event_name.trim()) {
       errors.event_name = 'Event name is required';
     }
-    if (!formData.event_type.trim()) {
-      errors.event_type = 'Event type is required';
-    }
     if (!formData.event_category_id || formData.event_category_id === 0) {
       errors.event_category_id = 'Please select a category';
     }
     if (!formData.hall_id || formData.hall_id === 0) {
       errors.hall_id = 'Please select a hall';
+    }
+    if (!formData.start_time) {
+      errors.start_time = 'Start time is required';
+    }
+    if (!formData.end_time) {
+      errors.end_time = 'End time is required';
+    }
+    if (formData.start_time && formData.end_time && formData.start_time >= formData.end_time) {
+      errors.end_time = 'End time must be after start time';
     }
 
     setFormErrors(errors);
@@ -218,10 +237,11 @@ export default function NewBookingPage() {
           customer_id: userId,
           user_id: userId,
           event_name: formData.event_name.trim(),
-          event_type: formData.event_type.trim(),
           event_category_id: formData.event_category_id,
           hall_id: formData.hall_id,
           event_date: format(selectedDate, 'yyyy-MM-dd'),
+          start_time: formData.start_time,
+          end_time: formData.end_time,
         }),
       });
 
@@ -230,7 +250,7 @@ export default function NewBookingPage() {
       if (res.ok) {
         showToast('Booking created successfully!', 'success');
         setDialogOpen(false);
-        setFormData({ event_name: '', event_type: '', event_category_id: 0, hall_id: 0 });
+        setFormData({ event_name: '', event_category_id: 0, hall_id: 0, start_time: '', end_time: '' });
         setSelectedDate(null);
         setFormErrors({});
         await fetchBookings();
@@ -468,10 +488,10 @@ export default function NewBookingPage() {
         setDialogOpen(open);
         if (!open) {
           setFormErrors({});
-          setFormData({ event_name: '', event_type: '', event_category_id: 0, hall_id: 0 });
+          setFormData({ event_name: '', event_category_id: 0, hall_id: 0, start_time: '', end_time: '' });
         }
       }}>
-        <DialogContent className="max-w-2xl shadow-2xl border-0 rounded-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl shadow-2xl border-0 rounded-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
           <DialogHeader className="bg-gradient-to-r from-blue-600 via-blue-700 to-blue-600 text-white p-6 rounded-t-2xl -mt-6 -mx-6 mb-6 relative overflow-hidden">
             <div className="absolute inset-0 bg-gradient-to-r from-yellow-400/10 to-transparent"></div>
             <div className="relative flex items-center justify-between">
@@ -484,154 +504,251 @@ export default function NewBookingPage() {
             </div>
           </DialogHeader>
 
-          {selectedDate && (
-            <div className="bg-gradient-to-r from-blue-50 via-blue-100/50 to-indigo-50 border-2 border-blue-200 rounded-xl p-4 mb-6 flex items-center gap-3 shadow-sm">
-              <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center">
-                <Calendar className="h-5 w-5 text-white" />
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-blue-700 uppercase tracking-wider mb-1">Selected Date</p>
-                <p className="text-blue-900 font-bold text-lg">{formatDate(selectedDate)}</p>
-              </div>
-            </div>
-          )}
-
           <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-gray-700 flex items-center gap-2">
-                <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <User className="h-4 w-4 text-blue-600" />
+            {/* Two Column Layout */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Left Column - Event Details */}
+              <div className="space-y-4">
+                {/* Date & Time Section */}
+                {selectedDate && (
+                  <div className="space-y-3">
+                    <label className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                      <Calendar className="h-4 w-4 text-blue-600" />
+                      Date & Time
+                    </label>
+
+                    {/* Date Display */}
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-lg p-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <Calendar className="h-5 w-5 text-white" />
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide">Selected Date</p>
+                          <p className="text-sm font-bold text-blue-900">{format(selectedDate, 'EEEE, MMMM d, yyyy')}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Time Selection */}
+                    <div className="bg-white border-2 border-gray-300 rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Clock className="h-4 w-4 text-gray-600" />
+                        <p className="text-xs font-semibold text-gray-700">Event Duration</p>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        {/* Start Time */}
+                        <div>
+                          <label className="text-xs font-medium text-gray-700 block mb-1.5">Start Time</label>
+                          <div className="relative">
+                            <Input
+                              type="time"
+                              value={formData.start_time}
+                              onChange={(e) => {
+                                setFormData({ ...formData, start_time: e.target.value });
+                                if (formErrors.start_time) {
+                                  setFormErrors({ ...formErrors, start_time: '' });
+                                }
+                              }}
+                              required
+                              className={`h-10 text-sm border-2 ${formErrors.start_time ? 'border-red-500' : 'border-gray-300'
+                                } focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 rounded-lg transition-all font-medium`}
+                            />
+                          </div>
+                        </div>
+
+                        {/* End Time */}
+                        <div>
+                          <label className="text-xs font-medium text-gray-700 block mb-1.5">End Time</label>
+                          <div className="relative">
+                            <Input
+                              type="time"
+                              value={formData.end_time}
+                              onChange={(e) => {
+                                setFormData({ ...formData, end_time: e.target.value });
+                                if (formErrors.end_time) {
+                                  setFormErrors({ ...formErrors, end_time: '' });
+                                }
+                              }}
+                              required
+                              className={`h-10 text-sm border-2 ${formErrors.end_time ? 'border-red-500' : 'border-gray-300'
+                                } focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 rounded-lg transition-all font-medium`}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {(formErrors.start_time || formErrors.end_time) && (
+                        <div className="mt-2 bg-red-50 border border-red-200 rounded-lg p-2">
+                          <p className="text-xs text-red-600 flex items-center gap-1">
+                            <AlertCircle className="h-3 w-3" />
+                            {formErrors.start_time || formErrors.end_time}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Event Name */}
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-gray-700">
+                    Event Name
+                  </label>
+                  <Input
+                    value={formData.event_name}
+                    onChange={(e) => {
+                      setFormData({ ...formData, event_name: e.target.value });
+                      if (formErrors.event_name) {
+                        setFormErrors({ ...formErrors, event_name: '' });
+                      }
+                    }}
+                    required
+                    placeholder="Event Name"
+                    className={`h-10 border-2 ${formErrors.event_name ? 'border-red-500' : 'border-gray-300'
+                      } focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 rounded-lg transition-all`}
+                  />
+                  {formErrors.event_name && (
+                    <p className="text-xs text-red-600 flex items-center gap-1">
+                      <AlertCircle className="h-3 w-3" />
+                      {formErrors.event_name}
+                    </p>
+                  )}
                 </div>
-                Event Name <span className="text-red-500">*</span>
-              </label>
-              <Input
-                value={formData.event_name}
-                onChange={(e) => {
-                  setFormData({ ...formData, event_name: e.target.value });
-                  if (formErrors.event_name) {
-                    setFormErrors({ ...formErrors, event_name: '' });
-                  }
-                }}
-                required
-                placeholder="Enter event name"
-                className={`h-12 border-2 ${formErrors.event_name ? 'border-red-500' : 'border-gray-300'
-                  } focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 rounded-xl transition-all`}
-              />
-              {formErrors.event_name && (
-                <p className="text-sm text-red-600 flex items-center gap-1">
-                  <AlertCircle className="h-4 w-4" />
-                  {formErrors.event_name}
-                </p>
-              )}
+
+                {/* Event Category */}
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-gray-700">
+                    Event Category
+                  </label>
+                  <select
+                    value={formData.event_category_id}
+                    onChange={(e) => {
+                      setFormData({ ...formData, event_category_id: parseInt(e.target.value) });
+                      if (formErrors.event_category_id) {
+                        setFormErrors({ ...formErrors, event_category_id: '' });
+                      }
+                    }}
+                    required
+                    className={`w-full h-10 rounded-lg border-2 ${formErrors.event_category_id ? 'border-red-500' : 'border-gray-300'
+                      } bg-white px-3 py-2 text-sm shadow-sm transition-all focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20`}
+                  >
+                    <option value={0}>Select a category</option>
+                    {categories.map((cat) => (
+                      <option key={cat.ID} value={cat.ID}>
+                        {cat.Name}
+                      </option>
+                    ))}
+                  </select>
+                  {formErrors.event_category_id && (
+                    <p className="text-xs text-red-600 flex items-center gap-1">
+                      <AlertCircle className="h-3 w-3" />
+                      {formErrors.event_category_id}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Right Column - Event Hall */}
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-gray-700">
+                  Event Hall
+                </label>
+                {getAvailableHalls().length === 0 ? (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-6 text-center">
+                    <Building2 className="h-10 w-10 text-amber-500 mx-auto mb-2" />
+                    <p className="text-sm text-amber-700 font-semibold">
+                      No halls available for this date
+                    </p>
+                    <p className="text-xs text-amber-600 mt-1">
+                      All halls are booked
+                    </p>
+                  </div>
+                ) : halls.length === 0 ? (
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center">
+                    <Building2 className="h-10 w-10 text-gray-400 mx-auto mb-2" />
+                    <p className="text-xs text-gray-500">No halls available</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className={`grid grid-cols-2 gap-2 ${formErrors.hall_id ? 'ring-2 ring-red-500 rounded-lg p-1' : ''}`}>
+                      {getAvailableHalls().map((hall) => (
+                        <button
+                          key={hall.ID}
+                          type="button"
+                          onClick={() => {
+                            setFormData({ ...formData, hall_id: hall.ID });
+                            if (formErrors.hall_id) {
+                              setFormErrors({ ...formErrors, hall_id: '' });
+                            }
+                          }}
+                          className={`relative overflow-hidden rounded-lg border-2 transition-all duration-200 hover:shadow-sm ${formData.hall_id === hall.ID
+                            ? 'border-blue-500 ring-2 ring-blue-300/50 shadow-md'
+                            : 'border-gray-200 hover:border-gray-300'
+                            }`}
+                        >
+                          <div className="aspect-square relative bg-gradient-to-br from-gray-100 to-gray-200">
+                            {hall.Photo ? (
+                              <img
+                                src={hall.Photo}
+                                alt={hall.Name}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex flex-col items-center justify-center">
+                                <Building2 className="h-8 w-8 text-gray-400" />
+                              </div>
+                            )}
+                            {formData.hall_id === hall.ID && (
+                              <div className="absolute top-1.5 right-1.5">
+                                <div className="w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center shadow-lg">
+                                  <Check className="h-3 w-3 text-white" />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          <div className="p-2 bg-white border-t border-gray-200">
+                            <p className="font-semibold text-[11px] text-center text-gray-800 truncate">
+                              {hall.Name}
+                            </p>
+                            {hall.Capacity && (
+                              <p className="text-[10px] text-gray-500 text-center truncate">
+                                Capacity: {hall.Capacity}
+                              </p>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                    {formErrors.hall_id && (
+                      <p className="text-xs text-red-600 flex items-center gap-1 mt-1">
+                        <AlertCircle className="h-3 w-3" />
+                        {formErrors.hall_id}
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-gray-700 flex items-center gap-2">
-                <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
-                  <Tag className="h-4 w-4 text-purple-600" />
-                </div>
-                Event Type <span className="text-red-500">*</span>
-              </label>
-              <Input
-                value={formData.event_type}
-                onChange={(e) => {
-                  setFormData({ ...formData, event_type: e.target.value });
-                  if (formErrors.event_type) {
-                    setFormErrors({ ...formErrors, event_type: '' });
-                  }
+            <div className="flex gap-3 pt-6">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setDialogOpen(false);
+                  setFormErrors({});
+                  setFormData({ event_name: '', event_category_id: 0, hall_id: 0, start_time: '', end_time: '' });
                 }}
-                required
-                placeholder="e.g. Wedding, Conference, Birthday"
-                className={`h-12 border-2 ${formErrors.event_type ? 'border-red-500' : 'border-gray-300'
-                  } focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 rounded-xl transition-all`}
-              />
-              {formErrors.event_type && (
-                <p className="text-sm text-red-600 flex items-center gap-1">
-                  <AlertCircle className="h-4 w-4" />
-                  {formErrors.event_type}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-gray-700 flex items-center gap-2">
-                <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
-                  <List className="h-4 w-4 text-green-600" />
-                </div>
-                Event Category <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={formData.event_category_id}
-                onChange={(e) => {
-                  setFormData({ ...formData, event_category_id: parseInt(e.target.value) });
-                  if (formErrors.event_category_id) {
-                    setFormErrors({ ...formErrors, event_category_id: '' });
-                  }
-                }}
-                required
-                className={`w-full h-12 rounded-xl border-2 ${formErrors.event_category_id ? 'border-red-500' : 'border-gray-300'
-                  } bg-transparent px-4 py-2 text-sm shadow-sm transition-all focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-500/20 font-medium`}
+                className="flex-1 h-11 border-2 border-gray-300 hover:bg-gray-50 font-semibold rounded-lg"
               >
-                <option value={0}>Select a category</option>
-                {categories.map((cat) => (
-                  <option key={cat.id} value={cat.id}>
-                    {cat.name}
-                  </option>
-                ))}
-              </select>
-              {formErrors.event_category_id && (
-                <p className="text-sm text-red-600 flex items-center gap-1">
-                  <AlertCircle className="h-4 w-4" />
-                  {formErrors.event_category_id}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-gray-700 flex items-center gap-2">
-                <div className="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center">
-                  <Building2 className="h-4 w-4 text-orange-600" />
-                </div>
-                Event Hall <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={formData.hall_id}
-                onChange={(e) => {
-                  setFormData({ ...formData, hall_id: parseInt(e.target.value) });
-                  if (formErrors.hall_id) {
-                    setFormErrors({ ...formErrors, hall_id: '' });
-                  }
-                }}
-                required
-                className={`w-full h-12 rounded-xl border-2 ${formErrors.hall_id ? 'border-red-500' : 'border-gray-300'
-                  } bg-transparent px-4 py-2 text-sm shadow-sm transition-all focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-500/20 font-medium`}
-              >
-                <option value={0}>Select a hall</option>
-                {getAvailableHalls().map((hall) => (
-                  <option key={hall.id} value={hall.id}>
-                    {hall.name}
-                  </option>
-                ))}
-              </select>
-              {formErrors.hall_id && (
-                <p className="text-sm text-red-600 flex items-center gap-1">
-                  <AlertCircle className="h-4 w-4" />
-                  {formErrors.hall_id}
-                </p>
-              )}
-              {getAvailableHalls().length === 0 && selectedDate && (
-                <p className="text-sm text-amber-600 flex items-center gap-1">
-                  <AlertCircle className="h-4 w-4" />
-                  No halls available for this date. Please select another date.
-                </p>
-              )}
-            </div>
-
-            <div className="flex gap-3 pt-6 border-t-2 border-gray-200">
+                Cancel
+              </Button>
               <Button
                 type="submit"
                 disabled={loading || (selectedDate !== null && getAvailableHalls().length === 0)}
-                className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-bold h-12 shadow-xl hover:shadow-2xl transition-all duration-300 transform hover:scale-105 gap-2 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold h-11 shadow-md hover:shadow-lg transition-all gap-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? (
                   <>
@@ -644,18 +761,6 @@ export default function NewBookingPage() {
                     Book Now
                   </>
                 )}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setDialogOpen(false);
-                  setFormErrors({});
-                  setFormData({ event_name: '', event_type: '', event_category_id: 0, hall_id: 0 });
-                }}
-                className="h-12 border-2 border-gray-300 hover:bg-gray-50 font-semibold rounded-xl"
-              >
-                Cancel
               </Button>
             </div>
           </form>
