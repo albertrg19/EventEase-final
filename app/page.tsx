@@ -48,6 +48,9 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [selectedHall, setSelectedHall] = useState<Hall | null>(null);
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [bookedDates, setBookedDates] = useState<string[]>([]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -161,6 +164,19 @@ export default function Home() {
         setHalls(normalizedHalls);
         setEvents(normalizedEvents);
         setCategories(normalizedCategories);
+
+        // Extract booked dates from events
+        const booked = normalizedEvents.map((event: EventItem) => {
+          const dates = [];
+          const start = new Date(event.start_date);
+          const end = new Date(event.end_date);
+          
+          for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+            dates.push(new Date(d).toISOString().split('T')[0]);
+          }
+          return dates;
+        }).flat();
+        setBookedDates(booked);
       } catch (e: any) {
         console.error('Failed to fetch data:', e);
         setError('Failed to load data. Please try again later.');
@@ -200,6 +216,65 @@ export default function Home() {
       return date.toLocaleDateString('en-US', options || { year: 'numeric', month: 'short', day: 'numeric' });
     } catch {
       return 'Date TBA';
+    }
+  };
+
+  // Calendar helper functions
+  const getDaysInMonth = (date: Date) => {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    const startingDayOfWeek = firstDay.getDay();
+    
+    return { daysInMonth, startingDayOfWeek, year, month };
+  };
+
+  const generateCalendarDays = () => {
+    const { daysInMonth, startingDayOfWeek, year, month } = getDaysInMonth(currentMonth);
+    const days = [];
+    
+    // Add empty cells for days before the first day of the month
+    for (let i = 0; i < startingDayOfWeek; i++) {
+      days.push(null);
+    }
+    
+    // Add all days of the month
+    for (let day = 1; day <= daysInMonth; day++) {
+      days.push(new Date(year, month, day));
+    }
+    
+    return days;
+  };
+
+  const isDateBooked = (date: Date) => {
+    const dateString = date.toISOString().split('T')[0];
+    return bookedDates.includes(dateString);
+  };
+
+  const isDatePast = (date: Date) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return date < today;
+  };
+
+  const isDateSelected = (date: Date) => {
+    if (!selectedDate) return false;
+    return date.toDateString() === selectedDate.toDateString();
+  };
+
+  const handlePrevMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
+  };
+
+  const handleNextMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
+  };
+
+  const handleDateClick = (date: Date) => {
+    if (!isDatePast(date) && !isDateBooked(date)) {
+      setSelectedDate(date);
     }
   };
 
@@ -581,53 +656,225 @@ export default function Home() {
       </section>
 
       {/* Check Availability */}
-      <section id="availability" data-section className="py-24 px-4 bg-gradient-to-b from-white to-gray-50 relative">
-        <div className="container mx-auto max-w-5xl">
+      <section id="availability" data-section className="py-24 px-4 relative overflow-hidden">
+        {/* Animated Background */}
+        <div className="absolute inset-0 bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50">
+          <div className="absolute top-0 right-0 w-96 h-96 bg-blue-400/20 rounded-full blur-3xl animate-pulse"></div>
+          <div className="absolute bottom-0 left-0 w-96 h-96 bg-purple-400/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }}></div>
+        </div>
+
+        <div className="container mx-auto max-w-6xl relative z-10">
           <div className={`text-center mb-16 transition-all duration-1000 ${visibleSections.has('availability') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}>
-            <div className="inline-flex items-center gap-2 mb-4 px-5 py-2 bg-gradient-to-r from-yellow-400 to-yellow-500 text-blue-950 text-xs font-bold uppercase tracking-wider rounded-full shadow-lg">
-              <Calendar className="h-3 w-3" />
+            <div className="inline-flex items-center gap-2 mb-4 px-5 py-2 bg-gradient-to-r from-yellow-400 to-orange-500 text-white text-xs font-bold uppercase tracking-wider rounded-full shadow-lg hover:shadow-xl transition-shadow">
+              <Calendar className="h-3 w-3 animate-pulse" />
               Plan Ahead
             </div>
-            <h2 className="text-4xl md:text-6xl font-extrabold mb-6 bg-gradient-to-r from-blue-950 via-blue-800 to-blue-950 bg-clip-text text-transparent">
+            <h2 className="text-4xl md:text-6xl font-extrabold mb-6 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 bg-clip-text text-transparent">
               Check Availability
             </h2>
-            <p className="text-lg md:text-xl text-gray-600 max-w-3xl mx-auto leading-relaxed">
-              View our upcoming events and check available dates for your booking.
+            <p className="text-lg md:text-xl text-gray-700 max-w-3xl mx-auto leading-relaxed">
+              Select your perfect date and book with confidence
             </p>
           </div>
 
-          <Card className={`border-2 border-gray-200 bg-white shadow-2xl overflow-hidden transition-all duration-1000 ${visibleSections.has('availability') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
+          <Card className={`border-0 bg-white shadow-2xl hover:shadow-3xl overflow-hidden transition-all duration-1000 rounded-3xl ${visibleSections.has('availability') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
             }`}>
-            <div className="bg-gradient-to-r from-blue-950 to-blue-800 p-6">
-              <div className="flex items-center justify-between">
-                <Button variant="outline" size="sm" className="border-white/30 text-white hover:bg-white/10 backdrop-blur-sm">
-                  ←
-                </Button>
-                <h3 className="text-2xl font-bold text-white">November 2025</h3>
-                <Button variant="outline" size="sm" className="border-white/30 text-white hover:bg-white/10 backdrop-blur-sm">
-                  →
-                </Button>
+            {/* Premium Header - Brand Colors */}
+            <div className="relative overflow-hidden">
+              {/* Blue gradient background */}
+              <div className="absolute inset-0 bg-gradient-to-r from-blue-950 via-blue-900 to-blue-800"></div>
+              
+              {/* Decorative shapes */}
+              <div className="absolute top-0 right-0 w-40 h-40 bg-yellow-400/10 rounded-full blur-3xl"></div>
+              <div className="absolute bottom-0 left-0 w-32 h-32 bg-yellow-400/10 rounded-full blur-2xl"></div>
+              
+              <div className="relative p-8">
+                <div className="flex items-center justify-between">
+                  <Button 
+                    variant="outline" 
+                    size="lg" 
+                    onClick={handlePrevMonth}
+                    className="border-2 border-yellow-400/40 text-yellow-400 hover:bg-yellow-400/20 backdrop-blur-md transition-all duration-300 hover:scale-110 hover:border-yellow-400 rounded-xl shadow-lg hover:shadow-xl group"
+                  >
+                    <ArrowRight className="h-5 w-5 rotate-180 group-hover:-translate-x-1 transition-transform" />
+                  </Button>
+                  
+                  <div className="text-center">
+                    <h3 className="text-3xl md:text-4xl font-extrabold text-white mb-1 drop-shadow-lg">
+                      {currentMonth.toLocaleDateString('en-US', { month: 'long' })}
+                    </h3>
+                    <p className="text-yellow-400 text-lg font-medium">
+                      {currentMonth.getFullYear()}
+                    </p>
+                  </div>
+                  
+                  <Button 
+                    variant="outline" 
+                    size="lg" 
+                    onClick={handleNextMonth}
+                    className="border-2 border-yellow-400/40 text-yellow-400 hover:bg-yellow-400/20 backdrop-blur-md transition-all duration-300 hover:scale-110 hover:border-yellow-400 rounded-xl shadow-lg hover:shadow-xl group"
+                  >
+                    <ArrowRight className="h-5 w-5 group-hover:translate-x-1 transition-transform" />
+                  </Button>
+                </div>
               </div>
             </div>
 
-            <CardContent className="p-8">
+            <CardContent className="p-8 md:p-10">
+              {/* Day labels */}
               <div className="grid grid-cols-7 gap-3 mb-6">
-                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-                  <div key={day} className="text-center text-sm font-bold text-gray-700 py-3 bg-gray-50 rounded-lg">
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, i) => (
+                  <div key={day} className={`text-center text-xs md:text-sm font-bold py-3 rounded-xl transition-all duration-300 
+                    ${i === 0 || i === 6 
+                      ? 'bg-blue-50 text-blue-900' 
+                      : 'bg-gray-50 text-gray-700'
+                    }`}>
                     {day}
                   </div>
                 ))}
               </div>
 
-              <div className="text-center py-16 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border-2 border-dashed border-blue-200">
-                <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-full mb-6">
-                  <Calendar className="h-10 w-10 text-blue-600" />
-                </div>
-                <h4 className="text-xl font-bold text-gray-800 mb-2">Interactive Calendar Coming Soon</h4>
-                <p className="text-gray-600 max-w-md mx-auto">
-                  We're working on bringing you a real-time availability calendar. Contact us for immediate booking inquiries.
-                </p>
+              {/* Calendar days */}
+              <div className="grid grid-cols-7 gap-2.5">
+                {generateCalendarDays().map((date, index) => {
+                  if (!date) {
+                    return <div key={`empty-${index}`} className="aspect-square"></div>;
+                  }
+
+                  const isBooked = isDateBooked(date);
+                  const isPast = isDatePast(date);
+                  const isSelected = isDateSelected(date);
+                  const isAvailable = !isBooked && !isPast;
+                  const isToday = new Date().toDateString() === date.toDateString();
+
+                  return (
+                    <button
+                      key={date.toISOString()}
+                      onClick={() => handleDateClick(date)}
+                      disabled={isPast || isBooked}
+                      className={`
+                        group aspect-square rounded-2xl font-bold text-sm md:text-base transition-all duration-300 relative overflow-hidden
+                        ${isPast 
+                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed opacity-50' 
+                          : isBooked
+                          ? 'bg-red-50 border-2 border-red-300 text-red-700 cursor-not-allowed shadow-sm'
+                          : isSelected
+                          ? 'bg-gradient-to-br from-blue-600 to-blue-800 text-white shadow-2xl scale-110 ring-4 ring-blue-200 z-10'
+                          : isToday
+                          ? 'bg-gradient-to-br from-yellow-50 to-yellow-100 border-2 border-yellow-400 text-yellow-900 hover:scale-105 hover:shadow-xl cursor-pointer ring-2 ring-yellow-300'
+                          : 'bg-white border-2 border-blue-200 text-blue-900 hover:bg-blue-50 hover:border-blue-400 hover:scale-105 hover:shadow-xl cursor-pointer'
+                        }
+                        ${isAvailable && !isSelected ? 'hover:ring-4 hover:ring-blue-200' : ''}
+                      `}
+                    >
+                      {/* Shimmer effect for available dates */}
+                      {isAvailable && !isSelected && (
+                        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500">
+                          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-blue-100/40 to-transparent animate-shimmer"></div>
+                        </div>
+                      )}
+                      
+                      {/* Date number */}
+                      <span className="relative z-10 flex items-center justify-center h-full">
+                        {date.getDate()}
+                      </span>
+                      
+                      {/* Status indicators */}
+                      {isBooked && (
+                        <span className="absolute bottom-1 left-1/2 transform -translate-x-1/2 text-base">
+                          🔒
+                        </span>
+                      )}
+                      {isToday && !isSelected && (
+                        <span className="absolute top-1 right-1 w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></span>
+                      )}
+                      {isAvailable && !isSelected && !isToday && (
+                        <span className="absolute bottom-1 left-1/2 transform -translate-x-1/2 text-xs opacity-0 group-hover:opacity-100 transition-opacity">
+                          ✓
+                        </span>
+                      )}
+                      {isSelected && (
+                        <span className="absolute top-1 right-1 text-lg animate-pulse">
+                          ⭐
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
+
+              {/* Modern Legend */}
+              <div className="mt-10 pt-8 border-t-2 border-gray-100">
+                <h4 className="text-center text-sm font-bold text-blue-900 uppercase tracking-wider mb-6">Legend</h4>
+                <div className="flex flex-wrap gap-6 justify-center">
+                  <div className="flex items-center gap-3 group cursor-default">
+                    <div className="w-10 h-10 rounded-xl bg-white border-2 border-blue-200 flex items-center justify-center text-base shadow-sm group-hover:shadow-md transition-all group-hover:scale-110">
+                      ✓
+                    </div>
+                    <span className="text-gray-700 font-semibold text-sm">Available</span>
+                  </div>
+                  <div className="flex items-center gap-3 group cursor-default">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-yellow-50 to-yellow-100 border-2 border-yellow-400 flex items-center justify-center shadow-sm group-hover:shadow-md transition-all group-hover:scale-110">
+                      <span className="w-2 h-2 bg-yellow-500 rounded-full"></span>
+                    </div>
+                    <span className="text-gray-700 font-semibold text-sm">Today</span>
+                  </div>
+                  <div className="flex items-center gap-3 group cursor-default">
+                    <div className="w-10 h-10 rounded-xl bg-red-50 border-2 border-red-300 flex items-center justify-center text-base shadow-sm group-hover:shadow-md transition-all group-hover:scale-110">
+                      🔒
+                    </div>
+                    <span className="text-gray-700 font-semibold text-sm">Booked</span>
+                  </div>
+                  <div className="flex items-center gap-3 group cursor-default">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center text-base shadow-lg group-hover:shadow-xl transition-all group-hover:scale-110">
+                      ⭐
+                    </div>
+                    <span className="text-gray-700 font-semibold text-sm">Selected</span>
+                  </div>
+                  <div className="flex items-center gap-3 group cursor-default">
+                    <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center opacity-50 shadow-sm group-hover:shadow-md transition-all group-hover:scale-110">
+                      <Calendar className="h-5 w-5 text-gray-400" />
+                    </div>
+                    <span className="text-gray-700 font-semibold text-sm">Past</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Premium Selected Date Panel - Brand Colors */}
+              {selectedDate && (
+                <div className="mt-8 relative overflow-hidden rounded-2xl animate-fade-in">
+                  {/* Blue gradient background */}
+                  <div className="absolute inset-0 bg-gradient-to-r from-blue-950 via-blue-900 to-blue-800"></div>
+                  
+                  {/* Decorative shapes */}
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-yellow-400/10 rounded-full blur-2xl"></div>
+                  <div className="absolute bottom-0 left-0 w-24 h-24 bg-yellow-400/10 rounded-full blur-xl"></div>
+                  
+                  <div className="relative p-6 md:p-8">
+                    <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+                      <div className="text-center md:text-left">
+                        <div className="flex items-center gap-2 mb-2 justify-center md:justify-start">
+                          <Calendar className="h-5 w-5 text-yellow-400" />
+                          <p className="text-sm font-semibold text-yellow-400 uppercase tracking-wider">Selected Date</p>
+                        </div>
+                        <p className="text-2xl md:text-3xl font-extrabold text-white drop-shadow-lg">
+                          {selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                        </p>
+                        <p className="text-yellow-400 text-lg font-medium mt-1">
+                          {selectedDate.getFullYear()}
+                        </p>
+                      </div>
+                      <Link href="/login">
+                        <Button size="lg" className="bg-gradient-to-r from-yellow-400 to-yellow-500 hover:from-yellow-500 hover:to-yellow-600 text-blue-950 px-8 py-6 text-lg font-bold shadow-2xl hover:shadow-yellow-400/50 transition-all duration-300 transform hover:scale-105 group rounded-xl">
+                          <Calendar className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
+                          Book This Date
+                          <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
+                        </Button>
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
