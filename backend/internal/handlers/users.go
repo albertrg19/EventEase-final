@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"net/http"
-    "os"
+	"os"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -22,11 +22,15 @@ func (h *UserHandler) List(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list"})
 		return
 	}
-	// Don't return passwords
+	// Filter out super admins from the list
+	filteredItems := []models.User{}
 	for i := range items {
-		items[i].Password = ""
+		if !isSuperAdmin(&items[i]) {
+			items[i].Password = ""
+			filteredItems = append(filteredItems, items[i])
+		}
 	}
-	c.JSON(http.StatusOK, items)
+	c.JSON(http.StatusOK, filteredItems)
 }
 
 type userCreate struct {
@@ -85,8 +89,22 @@ func (h *UserHandler) GetCurrentUser(c *gin.Context) {
 		return
 	}
 
+	// Convert userId to uint (JWT claims are typically float64)
+	var userID uint
+	switch v := userId.(type) {
+	case float64:
+		userID = uint(v)
+	case int:
+		userID = uint(v)
+	case uint:
+		userID = v
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+
 	var user models.User
-	if err := h.db.First(&user, userId).Error; err != nil {
+	if err := h.db.First(&user, userID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
@@ -97,6 +115,11 @@ func (h *UserHandler) GetCurrentUser(c *gin.Context) {
 func (h *UserHandler) Get(c *gin.Context) {
 	var user models.User
 	if err := h.db.First(&user, c.Param("id")).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	// Hide super admin from admin user management
+	if isSuperAdmin(&user) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
 	}
@@ -142,7 +165,7 @@ func (h *UserHandler) UpdateSelf(c *gin.Context) {
 	// Super admin protection
 	superEmail := os.Getenv("SUPER_ADMIN_EMAIL")
 	if superEmail == "" {
-		superEmail = "admin@admin.com"
+		superEmail = "superadmin@gmail.com"
 	}
 
 	if req.Name != nil {
@@ -191,11 +214,11 @@ func (h *UserHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
 	}
-    // Prevent modifying static super admin critical fields
-    superEmail := os.Getenv("SUPER_ADMIN_EMAIL")
-    if superEmail == "" {
-        superEmail = "admin@admin.com"
-    }
+	// Prevent modifying static super admin critical fields
+	superEmail := os.Getenv("SUPER_ADMIN_EMAIL")
+	if superEmail == "" {
+		superEmail = "superadmin@gmail.com"
+	}
 
 	var req userUpdate
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -206,11 +229,11 @@ func (h *UserHandler) Update(c *gin.Context) {
 	if req.Name != nil {
 		user.Name = *req.Name
 	}
-    if req.Email != nil {
-        if user.Email == superEmail && *req.Email != user.Email {
-            c.JSON(http.StatusForbidden, gin.H{"error": "cannot change super admin email"})
-            return
-        }
+	if req.Email != nil {
+		if user.Email == superEmail && *req.Email != user.Email {
+			c.JSON(http.StatusForbidden, gin.H{"error": "cannot change super admin email"})
+			return
+		}
 		// Check if email is already taken by another user
 		var existing models.User
 		if err := h.db.Where("email = ? AND id <> ?", *req.Email, user.ID).First(&existing).Error; err == nil {
@@ -222,11 +245,11 @@ func (h *UserHandler) Update(c *gin.Context) {
 	if req.Phone != nil {
 		user.Phone = req.Phone
 	}
-    if req.Role != nil {
-        if user.Email == superEmail && *req.Role != "admin" {
-            c.JSON(http.StatusForbidden, gin.H{"error": "cannot demote super admin"})
-            return
-        }
+	if req.Role != nil {
+		if user.Email == superEmail && *req.Role != "admin" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "cannot demote super admin"})
+			return
+		}
 		if *req.Role == "admin" {
 			user.Role = models.UserRoleAdmin
 		} else {
@@ -243,20 +266,20 @@ func (h *UserHandler) Update(c *gin.Context) {
 }
 
 func (h *UserHandler) Delete(c *gin.Context) {
-    var user models.User
-    if err := h.db.First(&user, c.Param("id")).Error; err != nil {
-        c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
-        return
-    }
-    superEmail := os.Getenv("SUPER_ADMIN_EMAIL")
-    if superEmail == "" {
-        superEmail = "admin@admin.com"
-    }
-    if user.Email == superEmail {
-        c.JSON(http.StatusForbidden, gin.H{"error": "cannot delete super admin"})
-        return
-    }
-    if err := h.db.Delete(&models.User{}, user.ID).Error; err != nil {
+	var user models.User
+	if err := h.db.First(&user, c.Param("id")).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	superEmail := os.Getenv("SUPER_ADMIN_EMAIL")
+	if superEmail == "" {
+		superEmail = "superadmin@gmail.com"
+	}
+	if user.Email == superEmail {
+		c.JSON(http.StatusForbidden, gin.H{"error": "cannot delete super admin"})
+		return
+	}
+	if err := h.db.Delete(&models.User{}, user.ID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed"})
 		return
 	}

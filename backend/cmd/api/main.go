@@ -134,7 +134,7 @@ func ensureSuperAdmin(db *gorm.DB) {
 	// Use env or sensible dev defaults
 	email := os.Getenv("SUPER_ADMIN_EMAIL")
 	if email == "" {
-		email = "admin@admin.com"
+		email = "superadmin@gmail.com"
 	}
 	password := os.Getenv("SUPER_ADMIN_PASSWORD")
 	if password == "" {
@@ -143,14 +143,27 @@ func ensureSuperAdmin(db *gorm.DB) {
 
 	var u models.User
 	if err := db.Where("email = ?", email).First(&u).Error; err == nil {
-		// Make sure role is admin
+		// Ensure role is admin, name is correct, and password is correct
+		needsUpdate := false
 		if u.Role != models.UserRoleAdmin {
 			u.Role = models.UserRoleAdmin
+			needsUpdate = true
+		}
+		if u.Name != "Super Admin" {
+			u.Name = "Super Admin"
+			needsUpdate = true
+		}
+		// Always update password to ensure it matches the expected password
+		hashed, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		u.Password = string(hashed)
+		needsUpdate = true
+		if needsUpdate {
 			_ = db.Save(&u).Error
 		}
 		return
 	}
 
+	// Create new super admin if it doesn't exist
 	hashed, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	user := models.User{
 		Name:     "Super Admin",
