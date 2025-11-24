@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Grid, Plus, Edit, Trash2, Loader2, Upload, Image as ImageIcon, X } from 'lucide-react';
 
 interface Category {
@@ -14,17 +14,91 @@ interface Category {
   image?: string;
 }
 
+const stripApiPath = (apiUrl: string) => {
+  try {
+    const parsed = new URL(apiUrl);
+    parsed.pathname = '';
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.origin;
+  } catch {
+    return apiUrl.replace(/\/api\b.*$/, '');
+  }
+};
+
+const resolveImageUrl = (rawUrl: string | undefined | null, assetBase: string) => {
+  if (!rawUrl) return undefined;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('//')) {
+    return `http:${trimmed}`;
+  }
+  const ensuredBase = assetBase.replace(/\/$/, '');
+  if (trimmed.startsWith('/')) {
+    return `${ensuredBase}${trimmed}`;
+  }
+  return `${ensuredBase}/${trimmed.replace(/^\/+/, '')}`;
+};
+
+const normalizeImageForPayload = (rawUrl: string | undefined | null, assetBase: string) => {
+  if (!rawUrl) return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+  const ensuredBase = assetBase.replace(/\/$/, '');
+  if (trimmed.startsWith(ensuredBase)) {
+    const relative = trimmed.slice(ensuredBase.length);
+    return relative.startsWith('/') ? relative : `/${relative}`;
+  }
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+};
+
 export default function CategoryManagementPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [formData, setFormData] = useState({ name: '', description: '', image: '' });
+  const [imagePreview, setImagePreview] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const api = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+  const assetBase = process.env.NEXT_PUBLIC_ASSET_BASE_URL || stripApiPath(api);
+  const previewObjectUrlRef = useRef<string | null>(null);
+
+  const setPreview = (url: string, isBlob = false) => {
+    if (previewObjectUrlRef.current && previewObjectUrlRef.current !== url) {
+      URL.revokeObjectURL(previewObjectUrlRef.current);
+      previewObjectUrlRef.current = null;
+    }
+    if (isBlob) {
+      previewObjectUrlRef.current = url;
+    }
+    setImagePreview(url);
+  };
+
+  const clearPreview = () => {
+    if (previewObjectUrlRef.current) {
+      URL.revokeObjectURL(previewObjectUrlRef.current);
+      previewObjectUrlRef.current = null;
+    }
+    setImagePreview('');
+  };
+
+  useEffect(() => {
+    return () => {
+      if (previewObjectUrlRef.current) {
+        URL.revokeObjectURL(previewObjectUrlRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     fetchCategories();
@@ -46,7 +120,7 @@ export default function CategoryManagementPage() {
             id: category.id ?? category.ID ?? index + 1,
             name: category.name ?? category.Name ?? '',
             description: category.description ?? category.Description ?? undefined,
-            image: category.image ?? category.Image ?? undefined,
+            image: resolveImageUrl(category.image ?? category.Image, assetBase),
           };
           return normalized;
         });
@@ -68,6 +142,8 @@ export default function CategoryManagementPage() {
   const uploadImage = async (file: File) => {
     setIsUploading(true);
     setImageError(null);
+    const tempPreview = URL.createObjectURL(file);
+    setPreview(tempPreview, true);
     try {
       const token = localStorage.getItem('token');
       const form = new FormData();
@@ -84,11 +160,20 @@ export default function CategoryManagementPage() {
         throw new Error(data.error || 'Upload failed');
       }
       const data = await res.json();
-      // Server returns a relative URL (/uploads/filename). Prefix with api if absolute needed by browser from Next client.
-      const url = data.url?.startsWith('http') ? data.url : `${api}${data.url}`;
+      const url = data.url?.startsWith('http')
+        ? data.url
+        : resolveImageUrl(data.url, assetBase) || '';
       setFormData(fd => ({ ...fd, image: url }));
+      if (url) {
+        setPreview(url);
+      }
     } catch (err: any) {
       setImageError(err.message || 'Upload failed');
+      if (formData.image) {
+        setPreview(formData.image);
+      } else {
+        clearPreview();
+      }
     } finally {
       setIsUploading(false);
     }
@@ -129,6 +214,7 @@ export default function CategoryManagementPage() {
   const removeImage = () => {
     setFormData({ ...formData, image: '' });
     setImageError(null);
+    clearPreview();
   };
 
   const handleDelete = async (id: number) => {
@@ -159,6 +245,8 @@ export default function CategoryManagementPage() {
       const url = editingCategory ? `${api}/api/admin/categories/${editingCategory.id}` : `${api}/api/admin/categories`;
       const method = editingCategory ? 'PUT' : 'POST';
 
+      const payloadImage = normalizeImageForPayload(formData.image, assetBase);
+
       const res = await fetch(url, {
         method,
         headers: {
@@ -168,7 +256,7 @@ export default function CategoryManagementPage() {
         body: JSON.stringify({
           name: formData.name.trim(),
           description: formData.description?.trim() || null,
-          image: formData.image?.trim() || null,
+          image: payloadImage,
         }),
       });
 
@@ -181,7 +269,7 @@ export default function CategoryManagementPage() {
             id: responseData.id ?? responseData.ID ?? Date.now(),
             name: responseData.name ?? responseData.Name ?? formData.name,
             description: (responseData.description ?? responseData.Description ?? formData.description) || undefined,
-            image: (responseData.image ?? responseData.Image ?? formData.image) || undefined,
+            image: resolveImageUrl(responseData.image ?? responseData.Image ?? formData.image, assetBase),
           };
 
           if (editingCategory) {
@@ -200,6 +288,7 @@ export default function CategoryManagementPage() {
         setEditingCategory(null);
         setFormData({ name: '', description: '', image: '' });
         setImageError(null);
+        clearPreview();
       } else {
         const errorData = await res.json().catch(() => ({ error: 'Failed to save category' }));
         alert(errorData.error || `Failed to save category: ${res.status} ${res.statusText}`);
@@ -214,11 +303,17 @@ export default function CategoryManagementPage() {
 
   const openEditDialog = (category: Category) => {
     setEditingCategory(category);
+    const previewUrl = category.image ? resolveImageUrl(category.image, assetBase) || '' : '';
     setFormData({
       name: category.name || '',
       description: category.description || '',
-      image: category.image || '',
+      image: previewUrl || '',
     });
+    if (previewUrl) {
+      setPreview(previewUrl);
+    } else {
+      clearPreview();
+    }
     setImageError(null);
     setIsDragging(false);
     setDialogOpen(true);
@@ -228,6 +323,7 @@ export default function CategoryManagementPage() {
     setEditingCategory(null);
     setFormData({ name: '', description: '', image: '' });
     setImageError(null);
+    clearPreview();
     setIsDragging(false);
     setDialogOpen(true);
   };
@@ -317,6 +413,9 @@ export default function CategoryManagementPage() {
             <DialogTitle className="text-2xl font-bold text-gray-900">
               {editingCategory ? 'Edit Category' : 'Add Category'}
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              Provide the category name, optional description, and image.
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-5 pt-4">
             <div className="space-y-2">
@@ -342,7 +441,7 @@ export default function CategoryManagementPage() {
             </div>
             <div className="space-y-2">
               <label className="text-sm font-semibold text-gray-700 block">Image</label>
-              {!formData.image ? (
+              {!imagePreview ? (
                 <div
                   onDrop={onDrop}
                   onDragOver={onDragOver}
@@ -378,15 +477,17 @@ export default function CategoryManagementPage() {
                 <div className="relative group">
                   <div className="border-2 border-gray-200 rounded-lg overflow-hidden bg-gray-50">
                     <img
-                      src={formData.image}
+                      src={imagePreview}
                       alt="Preview"
                       className="w-full h-48 object-cover"
                       onError={(e) => {
                         e.currentTarget.style.display = 'none';
+                        clearPreview();
+                        setImageError('Unable to display the selected image.');
                       }}
                     />
                   </div>
-                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200 rounded-lg flex items-center justify-center">
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all duration-200 rounded-lg flex items-center justify-center">
                     <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex gap-2">
                       <Button
                         type="button"
