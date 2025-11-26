@@ -93,11 +93,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
     }
 
     token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-        "sub":  user.ID,
-        "role": user.Role,
-        "exp":  time.Now().Add(24 * time.Hour).Unix(),
-        "iat":  time.Now().Unix(),
-        "nbf":  time.Now().Unix(),
+        "sub":   user.ID,
+        "email": user.Email,
+        "role":  user.Role,
+        "exp":   time.Now().Add(24 * time.Hour).Unix(),
+        "iat":   time.Now().Unix(),
+        "nbf":   time.Now().Unix(),
     })
 
     signed, err := token.SignedString([]byte(jwtSecret))

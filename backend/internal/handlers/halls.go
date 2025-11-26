@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +13,20 @@ import (
 type HallHandler struct{ db *gorm.DB }
 
 func NewHallHandler(db *gorm.DB) *HallHandler { return &HallHandler{db: db} }
+
+func (h *HallHandler) logActivity(c *gin.Context, action, resource string, resourceID *uint, details string) {
+	userID, _ := c.Get("userId")
+	userEmail, _ := c.Get("userEmail")
+	uid := uint(0)
+	if id, ok := userID.(float64); ok {
+		uid = uint(id)
+	}
+	email := ""
+	if e, ok := userEmail.(string); ok {
+		email = e
+	}
+	LogAdminActivity(h.db, uid, email, action, resource, resourceID, details, c.ClientIP())
+}
 
 func (h *HallHandler) List(c *gin.Context) {
 	var items []models.EventHall
@@ -47,6 +62,7 @@ func (h *HallHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "could not create"})
 		return
 	}
+	h.logActivity(c, "create", "hall", &hall.ID, fmt.Sprintf("Created hall: %s at %s", hall.Name, hall.Location))
 	c.JSON(http.StatusCreated, hall)
 }
 
@@ -70,6 +86,7 @@ func (h *HallHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	oldName := hall.Name
 	hall.Name = req.Name
 	hall.Location = req.Location
 	hall.Capacity = req.Capacity
@@ -81,13 +98,22 @@ func (h *HallHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "update failed"})
 		return
 	}
+	h.logActivity(c, "update", "hall", &hall.ID, fmt.Sprintf("Updated hall: %s -> %s", oldName, hall.Name))
 	c.JSON(http.StatusOK, hall)
 }
 
 func (h *HallHandler) Delete(c *gin.Context) {
-	if err := h.db.Delete(&models.EventHall{}, c.Param("id")).Error; err != nil {
+	var hall models.EventHall
+	if err := h.db.First(&hall, c.Param("id")).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	hallID := hall.ID
+	hallName := hall.Name
+	if err := h.db.Delete(&models.EventHall{}, hallID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed"})
 		return
 	}
+	h.logActivity(c, "delete", "hall", &hallID, fmt.Sprintf("Deleted hall: %s", hallName))
 	c.Status(http.StatusNoContent)
 }

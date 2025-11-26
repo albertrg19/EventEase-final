@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 
@@ -14,6 +15,20 @@ import (
 type UserHandler struct{ db *gorm.DB }
 
 func NewUserHandler(db *gorm.DB) *UserHandler { return &UserHandler{db: db} }
+
+func (h *UserHandler) logActivity(c *gin.Context, action, resource string, resourceID *uint, details string) {
+	userID, _ := c.Get("userId")
+	userEmail, _ := c.Get("userEmail")
+	uid := uint(0)
+	if id, ok := userID.(float64); ok {
+		uid = uint(id)
+	}
+	email := ""
+	if e, ok := userEmail.(string); ok {
+		email = e
+	}
+	LogAdminActivity(h.db, uid, email, action, resource, resourceID, details, c.ClientIP())
+}
 
 func (h *UserHandler) List(c *gin.Context) {
 	var items []models.User
@@ -78,6 +93,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "could not create"})
 		return
 	}
+	h.logActivity(c, "create", "user", &user.ID, fmt.Sprintf("Created user: %s (%s)", user.Name, user.Email))
 	user.Password = ""
 	c.JSON(http.StatusCreated, user)
 }
@@ -261,6 +277,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "update failed"})
 		return
 	}
+	h.logActivity(c, "update", "user", &user.ID, fmt.Sprintf("Updated user: %s (%s), role: %s", user.Name, user.Email, user.Role))
 	user.Password = ""
 	c.JSON(http.StatusOK, user)
 }
@@ -279,9 +296,13 @@ func (h *UserHandler) Delete(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "cannot delete super admin"})
 		return
 	}
-	if err := h.db.Delete(&models.User{}, user.ID).Error; err != nil {
+	userID := user.ID
+	userName := user.Name
+	userEmail := user.Email
+	if err := h.db.Delete(&models.User{}, userID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed"})
 		return
 	}
+	h.logActivity(c, "delete", "user", &userID, fmt.Sprintf("Deleted user: %s (%s)", userName, userEmail))
 	c.Status(http.StatusNoContent)
 }

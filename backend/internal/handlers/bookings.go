@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -10,9 +11,31 @@ import (
 	"venue-reservation/backend/internal/models"
 )
 
-type BookingHandler struct{ db *gorm.DB }
+type BookingHandler struct {
+	db           *gorm.DB
+	emailService *EmailService
+}
 
-func NewBookingHandler(db *gorm.DB) *BookingHandler { return &BookingHandler{db: db} }
+func NewBookingHandler(db *gorm.DB) *BookingHandler {
+	return &BookingHandler{
+		db:           db,
+		emailService: NewEmailService(db),
+	}
+}
+
+func (h *BookingHandler) logActivity(c *gin.Context, action, resource string, resourceID *uint, details string) {
+	userID, _ := c.Get("userId")
+	userEmail, _ := c.Get("userEmail")
+	uid := uint(0)
+	if id, ok := userID.(float64); ok {
+		uid = uint(id)
+	}
+	email := ""
+	if e, ok := userEmail.(string); ok {
+		email = e
+	}
+	LogAdminActivity(h.db, uid, email, action, resource, resourceID, details, c.ClientIP())
+}
 
 func (h *BookingHandler) List(c *gin.Context) {
 	var items []models.Booking
@@ -71,6 +94,7 @@ func (h *BookingHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "could not create"})
 		return
 	}
+	h.logActivity(c, "create", "booking", &item.ID, fmt.Sprintf("Created booking: %s on %s", item.EventName, item.EventDate.Format("2006-01-02")))
 	c.JSON(http.StatusCreated, item)
 }
 
@@ -119,17 +143,39 @@ func (h *BookingHandler) Update(c *gin.Context) {
 	if req.Status != "" {
 		item.Status = models.BookingStatus(req.Status)
 	}
+	oldStatus := item.Status
 	if err := h.db.Save(&item).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "update failed"})
 		return
 	}
+	h.logActivity(c, "update", "booking", &item.ID, fmt.Sprintf("Updated booking: %s, status: %s", item.EventName, item.Status))
+
+	// Send email notification if status changed
+	if req.Status != "" && models.BookingStatus(req.Status) != oldStatus {
+		go func() {
+			var user models.User
+			var hall models.EventHall
+			h.db.First(&user, item.UserID)
+			h.db.First(&hall, item.HallID)
+			h.emailService.SendBookingStatusEmail(&item, &user, &hall)
+		}()
+	}
+
 	c.JSON(http.StatusOK, item)
 }
 
 func (h *BookingHandler) Delete(c *gin.Context) {
-	if err := h.db.Delete(&models.Booking{}, c.Param("id")).Error; err != nil {
+	var item models.Booking
+	if err := h.db.First(&item, c.Param("id")).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	itemID := item.ID
+	eventName := item.EventName
+	if err := h.db.Delete(&models.Booking{}, itemID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed"})
 		return
 	}
+	h.logActivity(c, "delete", "booking", &itemID, fmt.Sprintf("Deleted booking: %s", eventName))
 	c.Status(http.StatusNoContent)
 }

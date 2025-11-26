@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -39,8 +40,21 @@ func main() {
 	// Ensure a static super admin exists
 	ensureSuperAdmin(db)
 
+	// Initialize backup handler and start scheduler (daily backups)
+	backupHandler := handlers.NewBackupHandler(db)
+	backupInterval := 24 * time.Hour // Daily backups
+	if env := os.Getenv("BACKUP_INTERVAL_HOURS"); env != "" {
+		if hours, err := time.ParseDuration(env + "h"); err == nil {
+			backupInterval = hours
+		}
+	}
+	backupHandler.StartScheduler(backupInterval)
+	defer backupHandler.StopScheduler()
+
 	r := gin.Default()
 	r.Use(middleware.CORS())
+	r.Use(middleware.SecurityHeaders())
+	r.Use(middleware.RateLimiter())
 
 	// Serve uploaded files (local dev)
 	// Files saved under ./uploads will be accessible at /uploads/<filename>
@@ -113,6 +127,12 @@ func main() {
 
 			// Activity log
 			admin.GET("/activity", activityHandler.List)
+
+			// Backups
+			admin.POST("/backups", backupHandler.CreateBackup)
+			admin.GET("/backups", backupHandler.ListBackups)
+			admin.GET("/backups/:filename", backupHandler.DownloadBackup)
+			admin.DELETE("/backups/:filename", backupHandler.DeleteBackup)
 		}
 
 		// Authenticated routes (admin and customer)

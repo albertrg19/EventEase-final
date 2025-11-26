@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -9,9 +10,31 @@ import (
 	"venue-reservation/backend/internal/models"
 )
 
-type InvoiceHandler struct{ db *gorm.DB }
+type InvoiceHandler struct {
+	db           *gorm.DB
+	emailService *EmailService
+}
 
-func NewInvoiceHandler(db *gorm.DB) *InvoiceHandler { return &InvoiceHandler{db: db} }
+func NewInvoiceHandler(db *gorm.DB) *InvoiceHandler {
+	return &InvoiceHandler{
+		db:           db,
+		emailService: NewEmailService(db),
+	}
+}
+
+func (h *InvoiceHandler) logActivity(c *gin.Context, action, resource string, resourceID *uint, details string) {
+	userID, _ := c.Get("userId")
+	userEmail, _ := c.Get("userEmail")
+	uid := uint(0)
+	if id, ok := userID.(float64); ok {
+		uid = uint(id)
+	}
+	email := ""
+	if e, ok := userEmail.(string); ok {
+		email = e
+	}
+	LogAdminActivity(h.db, uid, email, action, resource, resourceID, details, c.ClientIP())
+}
 
 func (h *InvoiceHandler) List(c *gin.Context) {
 	var items []models.Invoice
@@ -48,5 +71,21 @@ func (h *InvoiceHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "could not create"})
 		return
 	}
+
+	h.logActivity(c, "create", "invoice", &inv.ID, fmt.Sprintf("Created invoice #%d for booking #%d, total: ₱%.2f", inv.ID, inv.BookingID, inv.TotalAmount))
+
+	// Send email notification
+	go func() {
+		var booking models.Booking
+		if err := h.db.First(&booking, inv.BookingID).Error; err != nil {
+			return
+		}
+		var user models.User
+		if err := h.db.First(&user, booking.UserID).Error; err != nil {
+			return
+		}
+		h.emailService.SendInvoiceEmail(&inv, &booking, &user)
+	}()
+
 	c.JSON(http.StatusCreated, inv)
 }
