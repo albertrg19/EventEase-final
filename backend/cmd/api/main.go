@@ -31,6 +31,7 @@ func main() {
 		&models.Booking{},
 		&models.Invoice{},
 		&models.HomepageContent{},
+		&models.AdminActivity{},
 	); err != nil {
 		log.Fatalf("auto migration failed: %v", err)
 	}
@@ -45,10 +46,12 @@ func main() {
 	// Files saved under ./uploads will be accessible at /uploads/<filename>
 	r.Static("/uploads", "./uploads")
 
-	// Health
+	// Health endpoints
+	healthHandler := handlers.NewHealthHandler(db)
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	r.GET("/api/health/status", healthHandler.Status)
 
 	// API routes
 	api := r.Group("/api")
@@ -69,6 +72,7 @@ func main() {
 		bookingHandler := handlers.NewBookingHandler(db)
 		userHandler := handlers.NewUserHandler(db)
 		uploadHandler := handlers.NewUploadHandler()
+		activityHandler := handlers.NewAdminActivityHandler(db)
 
 		api.GET("/categories", catHandler.List)
 		api.GET("/halls", hallHandler.List)
@@ -106,6 +110,9 @@ func main() {
 
 			// Uploads
 			admin.POST("/uploads/images", uploadHandler.Image)
+
+			// Activity log
+			admin.GET("/activity", activityHandler.List)
 		}
 
 		// Authenticated routes (admin and customer)
