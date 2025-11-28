@@ -34,6 +34,12 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
     }
   }, [router]);
 
+  useEffect(() => {
+    if (pathname === '/customer') {
+      router.replace('/customer/dashboard');
+    }
+  }, [pathname, router]);
+
   const fetchUserProfile = async () => {
     try {
       const token = localStorage.getItem('token');
@@ -70,6 +76,7 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
   };
 
   const menuItems = [
+    { icon: Calendar, label: 'Dashboard', href: '/customer/dashboard' },
     { icon: CheckSquare, label: 'My Bookings', href: '/customer/bookings' },
     { icon: Plus, label: 'New Booking', href: '/customer/booking' },
     { icon: User, label: 'My Profile', href: '/customer/profile' },

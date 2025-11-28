@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Building2, Plus, Edit, Trash2, Search, Loader2, Upload, Image as ImageIcon, X } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Building2, Plus, Edit, Trash2, Search, Loader2, Upload, Image as ImageIcon, X, Download } from 'lucide-react';
 
 interface Hall {
   id: number;
@@ -17,6 +17,50 @@ interface Hall {
   description?: string;
   photo?: string;
 }
+
+const stripApiPath = (apiUrl: string) => {
+  try {
+    const parsed = new URL(apiUrl);
+    parsed.pathname = '';
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.origin;
+  } catch {
+    return apiUrl.replace(/\/api\b.*$/, '');
+  }
+};
+
+const resolveImageUrl = (rawUrl: string | undefined | null, assetBase: string) => {
+  if (!rawUrl) return undefined;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('//')) {
+    return `http:${trimmed}`;
+  }
+  const ensuredBase = assetBase.replace(/\/$/, '');
+  if (trimmed.startsWith('/')) {
+    return `${ensuredBase}${trimmed}`;
+  }
+  return `${ensuredBase}/${trimmed.replace(/^\/+/, '')}`;
+};
+
+const normalizeImageForPayload = (rawUrl: string | undefined | null, assetBase: string) => {
+  if (!rawUrl) return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+  const ensuredBase = assetBase.replace(/\/$/, '');
+  if (trimmed.startsWith(ensuredBase)) {
+    const relative = trimmed.slice(ensuredBase.length);
+    return relative.startsWith('/') ? relative : `/${relative}`;
+  }
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+};
 
 function HallImageCell({ photo, name }: { photo?: string; name?: string }) {
   const [imageError, setImageError] = useState(false);
@@ -49,11 +93,47 @@ export default function HallManagementPage() {
   const [formData, setFormData] = useState({
     name: '', location: '', capacity: 0, max_capacity: 0, price: 0, description: '', photo: ''
   });
+  const [imagePreview, setImagePreview] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [inlineEditId, setInlineEditId] = useState<number | null>(null);
+  const [inlineForm, setInlineForm] = useState({ name: '', location: '', price: 0 });
+  const [inlineSaving, setInlineSaving] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const api = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+  const assetBase = process.env.NEXT_PUBLIC_ASSET_BASE_URL || stripApiPath(api);
+  const previewObjectUrlRef = useRef<string | null>(null);
+
+  const setPreview = (url: string, isBlob = false) => {
+    if (previewObjectUrlRef.current && previewObjectUrlRef.current !== url) {
+      URL.revokeObjectURL(previewObjectUrlRef.current);
+      previewObjectUrlRef.current = null;
+    }
+    if (isBlob) {
+      previewObjectUrlRef.current = url;
+    }
+    setImagePreview(url);
+  };
+
+  const clearPreview = () => {
+    if (previewObjectUrlRef.current) {
+      URL.revokeObjectURL(previewObjectUrlRef.current);
+      previewObjectUrlRef.current = null;
+    }
+    setImagePreview('');
+  };
+
+  useEffect(() => {
+    return () => {
+      if (previewObjectUrlRef.current) {
+        URL.revokeObjectURL(previewObjectUrlRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     fetchHalls();
@@ -72,10 +152,7 @@ export default function HallManagementPage() {
         const normalizedHalls = hallsArray.map((hall: any, index: number) => {
           // Normalize field names - backend might send MaxCapacity, maxCapacity, or max_capacity
           const photoValue = hall.photo ?? hall.Photo;
-          // Ensure photo URL is absolute if it's a relative path
-          const photoUrl = photoValue
-            ? (photoValue.startsWith('http') ? photoValue : `${api}${photoValue.startsWith('/') ? photoValue : '/' + photoValue}`)
-            : undefined;
+          const photoUrl = resolveImageUrl(photoValue, assetBase);
 
           const normalized: Hall = {
             id: hall.id ?? hall.ID ?? index + 1,
@@ -107,6 +184,8 @@ export default function HallManagementPage() {
   const uploadImage = async (file: File) => {
     setIsUploading(true);
     setImageError(null);
+    const tempPreview = URL.createObjectURL(file);
+    setPreview(tempPreview, true);
     try {
       const token = localStorage.getItem('token');
       const form = new FormData();
@@ -123,11 +202,20 @@ export default function HallManagementPage() {
         throw new Error(data.error || 'Upload failed');
       }
       const data = await res.json();
-      // Server returns a relative URL (/uploads/filename). Prefix with api if absolute needed by browser from Next client.
-      const url = data.url?.startsWith('http') ? data.url : `${api}${data.url}`;
+      const url = data.url?.startsWith('http')
+        ? data.url
+        : resolveImageUrl(data.url, assetBase) || '';
       setFormData(fd => ({ ...fd, photo: url }));
+      if (url) {
+        setPreview(url);
+      }
     } catch (err: any) {
       setImageError(err.message || 'Upload failed');
+      if (formData.photo) {
+        setPreview(formData.photo);
+      } else {
+        clearPreview();
+      }
     } finally {
       setIsUploading(false);
     }
@@ -168,6 +256,7 @@ export default function HallManagementPage() {
   const removeImage = () => {
     setFormData({ ...formData, photo: '' });
     setImageError(null);
+    clearPreview();
   };
 
   const handleDelete = async (id: number) => {
@@ -179,12 +268,125 @@ export default function HallManagementPage() {
         headers: { 'Authorization': `Bearer ${token}` },
       });
       if (res.ok) {
-        fetchHalls();
+        setHalls((prev) => prev.filter((h) => h.id !== id));
+        setSelectedIds((prev) => prev.filter((i) => i !== id));
       }
     } catch (error) {
       console.error('Failed to delete hall:', error);
     }
   };
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]));
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.length === filteredHalls.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(filteredHalls.map((h) => h.id));
+    }
+  };
+
+  const hasSelection = selectedIds.length > 0;
+
+  const handleBulkDelete = async () => {
+    if (!hasSelection) return;
+    if (!confirm(`Delete ${selectedIds.length} halls? This cannot be undone.`)) return;
+    setBulkDeleting(true);
+    try {
+      const token = localStorage.getItem('token');
+      for (const id of selectedIds) {
+        await fetch(`${api}/api/admin/halls/${id}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+      }
+      setHalls((prev) => prev.filter((h) => !selectedIds.includes(h.id)));
+      setSelectedIds([]);
+    } catch (error) {
+      console.error('Bulk delete failed:', error);
+      alert('Some deletions failed. Please try again.');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  const startInlineEdit = (hall: Hall) => {
+    setInlineEditId(hall.id);
+    setInlineForm({ name: hall.name || '', location: hall.location || '', price: hall.price || 0 });
+  };
+
+  const cancelInlineEdit = () => {
+    setInlineEditId(null);
+    setInlineForm({ name: '', location: '', price: 0 });
+  };
+
+  const saveInlineEdit = async () => {
+    if (!inlineEditId) return;
+    if (!inlineForm.name.trim() || !inlineForm.location.trim()) {
+      alert('Name and location are required.');
+      return;
+    }
+    const hall = halls.find((h) => h.id === inlineEditId);
+    if (!hall) return;
+    setInlineSaving(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${api}/api/admin/halls/${inlineEditId}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: inlineForm.name.trim(),
+          location: inlineForm.location.trim(),
+          capacity: hall.capacity,
+          max_capacity: hall.max_capacity,
+          price: inlineForm.price,
+          description: hall.description || null,
+          photo: normalizeImageForPayload(hall.photo, assetBase),
+        }),
+      });
+      if (res.ok) {
+        setHalls((prev) =>
+          prev.map((h) =>
+            h.id === inlineEditId
+              ? { ...h, name: inlineForm.name, location: inlineForm.location, price: inlineForm.price }
+              : h
+          )
+        );
+        cancelInlineEdit();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Failed to save changes');
+      }
+    } catch (error) {
+      console.error('Inline edit failed:', error);
+      alert('Unable to update hall.');
+    } finally {
+      setInlineSaving(false);
+    }
+  };
+
+  const exportCSV = () => {
+    const headers = ['ID', 'Name', 'Location', 'Capacity', 'Max Capacity', 'Price'];
+    const rows = filteredHalls.map((h) => [h.id, h.name, h.location, h.capacity, h.max_capacity, h.price]);
+    const csvContent = [headers, ...rows].map((row) => row.join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `halls_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+  };
+
+  const filteredHalls = halls.filter((hall) => {
+    const name = (hall.name || '').toLowerCase();
+    const location = (hall.location || '').toLowerCase();
+    const query = searchQuery.toLowerCase();
+    return name.includes(query) || location.includes(query);
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -202,6 +404,8 @@ export default function HallManagementPage() {
       const url = editingHall ? `${api}/api/admin/halls/${editingHall.id}` : `${api}/api/admin/halls`;
       const method = editingHall ? 'PUT' : 'POST';
 
+      const payloadPhoto = normalizeImageForPayload(formData.photo, assetBase);
+
       const res = await fetch(url, {
         method,
         headers: {
@@ -215,7 +419,7 @@ export default function HallManagementPage() {
           max_capacity: Number(formData.max_capacity) || 0,
           price: Number(formData.price) || 0,
           description: formData.description?.trim() || null,
-          photo: formData.photo?.trim() || null,
+          photo: payloadPhoto,
         }),
       });
 
@@ -232,7 +436,7 @@ export default function HallManagementPage() {
             max_capacity: responseData.max_capacity ?? responseData.maxCapacity ?? responseData.MaxCapacity ?? formData.max_capacity,
             price: responseData.price ?? responseData.Price ?? formData.price,
             description: (responseData.description ?? responseData.Description ?? formData.description) || undefined,
-            photo: (responseData.photo ?? responseData.Photo ?? formData.photo) || undefined,
+            photo: resolveImageUrl(responseData.photo ?? responseData.Photo ?? formData.photo, assetBase),
           };
 
           if (editingHall) {
@@ -251,6 +455,7 @@ export default function HallManagementPage() {
         setEditingHall(null);
         setFormData({ name: '', location: '', capacity: 0, max_capacity: 0, price: 0, description: '', photo: '' });
         setImageError(null);
+        clearPreview();
       } else {
         const errorData = await res.json().catch(() => ({ error: 'Failed to save hall' }));
         alert(errorData.error || `Failed to save hall: ${res.status} ${res.statusText}`);
@@ -265,6 +470,7 @@ export default function HallManagementPage() {
 
   const openEditDialog = (hall: Hall) => {
     setEditingHall(hall);
+    const previewUrl = hall.photo ? resolveImageUrl(hall.photo, assetBase) || '' : '';
     setFormData({
       name: hall.name || '',
       location: hall.location || '',
@@ -272,8 +478,13 @@ export default function HallManagementPage() {
       max_capacity: hall.max_capacity ?? 0,
       price: hall.price ?? 0,
       description: hall.description || '',
-      photo: hall.photo || '',
+      photo: previewUrl || '',
     });
+    if (previewUrl) {
+      setPreview(previewUrl);
+    } else {
+      clearPreview();
+    }
     setImageError(null);
     setIsDragging(false);
     setDialogOpen(true);
@@ -283,26 +494,73 @@ export default function HallManagementPage() {
     setEditingHall(null);
     setFormData({ name: '', location: '', capacity: 0, max_capacity: 0, price: 0, description: '', photo: '' });
     setImageError(null);
+    clearPreview();
     setIsDragging(false);
     setDialogOpen(true);
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Hall Management</h1>
           <p className="text-gray-600 mt-1">Manage event halls and venues</p>
         </div>
-        <Button onClick={openAddDialog} className="bg-yellow-400 hover:bg-yellow-500 text-blue-950 gap-2">
-          <Plus className="h-4 w-4" />
-          Add New Hall
-        </Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Input
+              type="search"
+              placeholder="Search halls..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10 w-48"
+            />
+          </div>
+          <Button variant="outline" onClick={exportCSV} className="gap-2">
+            <Download className="h-4 w-4" />
+            Export
+          </Button>
+          <Button onClick={openAddDialog} className="bg-yellow-400 hover:bg-yellow-500 text-blue-950 gap-2">
+            <Plus className="h-4 w-4" />
+            Add Hall
+          </Button>
+        </div>
       </div>
+
+      {hasSelection && (
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4 border border-yellow-200 rounded-lg bg-yellow-50">
+          <div>
+            <p className="text-sm font-semibold text-yellow-900">{selectedIds.length} halls selected</p>
+            <p className="text-xs text-yellow-700">Apply bulk actions to selected items.</p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setSelectedIds([])}>
+              Clear
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleBulkDelete}
+              disabled={bulkDeleting}
+              className="bg-red-600 hover:bg-red-500"
+            >
+              {bulkDeleting ? (
+                <span className="inline-flex items-center gap-1 text-white">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Deleting...
+                </span>
+              ) : (
+                'Delete Selected'
+              )}
+            </Button>
+          </div>
+        </div>
+      )}
 
       <Card>
         <CardHeader>
-          <CardTitle>All Halls</CardTitle>
+          <CardTitle>All Halls ({filteredHalls.length})</CardTitle>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -310,7 +568,7 @@ export default function HallManagementPage() {
               <Loader2 className="h-8 w-8 animate-spin mx-auto text-gray-400 mb-4" />
               <p className="text-gray-500">Loading halls...</p>
             </div>
-          ) : halls.length === 0 ? (
+          ) : filteredHalls.length === 0 ? (
             <div className="text-center py-12">
               <Building2 className="h-16 w-16 mx-auto text-gray-400 mb-4" />
               <p className="text-gray-500">No halls available. Add a new hall to get started.</p>
@@ -320,6 +578,14 @@ export default function HallManagementPage() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-gray-200">
+                    <th className="py-3 px-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.length === filteredHalls.length && filteredHalls.length > 0}
+                        onChange={toggleSelectAll}
+                        className="h-4 w-4 accent-blue-600"
+                      />
+                    </th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Image</th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Name</th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Location</th>
@@ -329,30 +595,86 @@ export default function HallManagementPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {halls.map((hall, index) => (
+                  {filteredHalls.map((hall, index) => (
                     <tr key={hall.id ?? `hall-${index}`} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="py-3 px-4">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(hall.id)}
+                          onChange={() => toggleSelect(hall.id)}
+                          className="h-4 w-4 accent-blue-600"
+                        />
+                      </td>
                       <td className="py-3 px-4">
                         <HallImageCell photo={hall.photo} name={hall.name} />
                       </td>
-                      <td className="py-3 px-4 font-medium">{hall.name || '-'}</td>
-                      <td className="py-3 px-4 text-gray-600">{hall.location || '-'}</td>
+                      <td className="py-3 px-4 font-medium">
+                        {inlineEditId === hall.id ? (
+                          <Input
+                            value={inlineForm.name}
+                            onChange={(e) => setInlineForm((prev) => ({ ...prev, name: e.target.value }))}
+                            className="h-9"
+                          />
+                        ) : (
+                          hall.name || '-'
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-gray-600">
+                        {inlineEditId === hall.id ? (
+                          <Input
+                            value={inlineForm.location}
+                            onChange={(e) => setInlineForm((prev) => ({ ...prev, location: e.target.value }))}
+                            className="h-9"
+                          />
+                        ) : (
+                          hall.location || '-'
+                        )}
+                      </td>
                       <td className="py-3 px-4 text-gray-600">
                         {hall.max_capacity != null ? hall.max_capacity.toLocaleString() : '-'}
                       </td>
                       <td className="py-3 px-4 text-gray-600">
-                        {hall.price != null ? `₱${hall.price.toLocaleString()}` : '-'}
+                        {inlineEditId === hall.id ? (
+                          <Input
+                            type="number"
+                            value={inlineForm.price}
+                            onChange={(e) => setInlineForm((prev) => ({ ...prev, price: parseFloat(e.target.value) || 0 }))}
+                            className="h-9 w-24"
+                          />
+                        ) : (
+                          hall.price != null ? `₱${hall.price.toLocaleString()}` : '-'
+                        )}
                       </td>
                       <td className="py-3 px-4">
-                        <div className="flex gap-2">
-                          <Button variant="outline" size="sm" onClick={() => openEditDialog(hall)} className="gap-1">
-                            <Edit className="h-3 w-3" />
-                            Edit
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={() => handleDelete(hall.id)} className="gap-1 text-red-600 hover:text-red-700">
-                            <Trash2 className="h-3 w-3" />
-                            Delete
-                          </Button>
-                        </div>
+                        {inlineEditId === hall.id ? (
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              className="bg-blue-600 hover:bg-blue-500 text-white"
+                              disabled={inlineSaving}
+                              onClick={saveInlineEdit}
+                            >
+                              {inlineSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={cancelInlineEdit}>
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex gap-2">
+                            <Button variant="outline" size="sm" onClick={() => startInlineEdit(hall)} className="gap-1">
+                              <Edit className="h-3 w-3" />
+                              Quick
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => openEditDialog(hall)} className="gap-1">
+                              <Building2 className="h-3 w-3" />
+                              Full
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => handleDelete(hall.id)} className="gap-1 text-red-600 hover:text-red-700">
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -369,6 +691,9 @@ export default function HallManagementPage() {
             <DialogTitle className="text-2xl font-bold text-gray-900">
               {editingHall ? 'Edit Hall' : 'Add New Hall'}
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              Provide hall details, pricing, and upload a photo.
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-5 pt-4">
             <div className="space-y-2">
@@ -455,7 +780,7 @@ export default function HallManagementPage() {
             </div>
             <div className="space-y-2">
               <label className="text-sm font-semibold text-gray-700 block">Photo</label>
-              {!formData.photo ? (
+              {!imagePreview ? (
                 <div
                   onDrop={onDrop}
                   onDragOver={onDragOver}
@@ -491,15 +816,17 @@ export default function HallManagementPage() {
                 <div className="relative group">
                   <div className="border-2 border-gray-200 rounded-lg overflow-hidden bg-gray-50">
                     <img
-                      src={formData.photo}
+                      src={imagePreview}
                       alt="Preview"
                       className="w-full h-48 object-cover"
                       onError={(e) => {
                         e.currentTarget.style.display = 'none';
+                        clearPreview();
+                        setImageError('Unable to display the selected photo.');
                       }}
                     />
                   </div>
-                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200 rounded-lg flex items-center justify-center">
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all duration-200 rounded-lg flex items-center justify-center">
                     <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex gap-2">
                       <Button
                         type="button"
