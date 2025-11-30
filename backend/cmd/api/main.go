@@ -33,6 +33,8 @@ func main() {
 		&models.Invoice{},
 		&models.HomepageContent{},
 		&models.AdminActivity{},
+		&models.Favorite{},
+		&models.Review{},
 	); err != nil {
 		log.Fatalf("auto migration failed: %v", err)
 	}
@@ -87,6 +89,8 @@ func main() {
 		userHandler := handlers.NewUserHandler(db)
 		uploadHandler := handlers.NewUploadHandler()
 		activityHandler := handlers.NewAdminActivityHandler(db)
+		favoriteHandler := handlers.NewFavoriteHandler(db)
+		reviewHandler := handlers.NewReviewHandler(db)
 
 		api.GET("/categories", catHandler.List)
 		api.GET("/halls", hallHandler.List)
@@ -97,6 +101,10 @@ func main() {
 		api.GET("/halls/:id", hallHandler.Get)
 		api.GET("/events/:id", eventHandler.Get)
 		api.GET("/bookings/:id", bookingHandler.Get)
+
+		// Public review endpoints
+		api.GET("/halls/:hall_id/reviews", reviewHandler.ListByHall)
+		api.GET("/halls/:hall_id/reviews/stats", reviewHandler.GetHallStats)
 
 		// Protected mutating routes (admin only)
 		admin := api.Group("/admin")
@@ -148,6 +156,18 @@ func main() {
 			secure.POST("/bookings", bookingHandler.Create)
 			secure.PUT("/bookings/:id", bookingHandler.Update)
 			secure.DELETE("/bookings/:id", bookingHandler.Delete)
+
+			// Favorites
+			secure.GET("/favorites", favoriteHandler.List)
+			secure.POST("/favorites", favoriteHandler.Add)
+			secure.DELETE("/favorites/:hall_id", favoriteHandler.Remove)
+			secure.GET("/favorites/check/:hall_id", favoriteHandler.Check)
+
+			// Reviews (user-specific)
+			secure.GET("/my-reviews", reviewHandler.ListByUser)
+			secure.POST("/reviews", reviewHandler.Create)
+			secure.PUT("/reviews/:id", reviewHandler.Update)
+			secure.DELETE("/reviews/:id", reviewHandler.Delete)
 		}
 	}
 
