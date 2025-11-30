@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Users, Calendar, Building2, Receipt, TrendingUp, ArrowRight, CheckCircle2 } from 'lucide-react';
 import Link from 'next/link';
 
-type Booking = { id: number; event_name: string; event_date: string; status: string; user?: { name: string } };
+type Booking = { id: number; event_name: string; event_date: string; status?: string; user?: { name: string } };
 
 export default function DashboardPage() {
   const api = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
@@ -99,16 +99,16 @@ export default function DashboardPage() {
               <p className="text-sm text-gray-600">No recent bookings to display.</p>
             ) : (
               <div className="divide-y">
-                {recent.map((b) => (
-                  <div key={b.id} className="flex items-center justify-between py-3">
+                {recent.map((b, index) => (
+                  <div key={`booking-${b.id ?? index}`} className="flex items-center justify-between py-3">
                     <div>
                       <div className="font-semibold text-gray-900">{b.event_name}</div>
                       <div className="text-xs text-gray-500">{new Date(b.event_date).toLocaleDateString()}</div>
                     </div>
-                    <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold border ${b.status === 'approved' ? 'bg-green-50 text-green-700 border-green-200' : b.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-yellow-50 text-yellow-700 border-yellow-200'
+                    <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold border ${(b.status || 'pending') === 'approved' ? 'bg-green-50 text-green-700 border-green-200' : (b.status || 'pending') === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-yellow-50 text-yellow-700 border-yellow-200'
                       }`}>
                       <CheckCircle2 className="h-3 w-3" />
-                      {b.status.toUpperCase()}
+                      {(b.status || 'pending').toUpperCase()}
                     </span>
                   </div>
                 ))}

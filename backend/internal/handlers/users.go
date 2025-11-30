@@ -156,6 +156,7 @@ type userSelfUpdate struct {
 	Name     *string `json:"name"`
 	Email    *string `json:"email"`
 	Phone    *string `json:"phone"`
+	Photo    *string `json:"photo"`
 	Password *string `json:"password"`
 }
 
@@ -202,6 +203,9 @@ func (h *UserHandler) UpdateSelf(c *gin.Context) {
 	}
 	if req.Phone != nil {
 		user.Phone = req.Phone
+	}
+	if req.Photo != nil {
+		user.Photo = req.Photo
 	}
 	if req.Password != nil && *req.Password != "" {
 		if len(*req.Password) < 6 {

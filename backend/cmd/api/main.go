@@ -102,9 +102,9 @@ func main() {
 		api.GET("/events/:id", eventHandler.Get)
 		api.GET("/bookings/:id", bookingHandler.Get)
 
-		// Public review endpoints
-		api.GET("/halls/:hall_id/reviews", reviewHandler.ListByHall)
-		api.GET("/halls/:hall_id/reviews/stats", reviewHandler.GetHallStats)
+		// Public review endpoints (use different path to avoid conflict with /halls/:id)
+		api.GET("/reviews/hall/:hall_id", reviewHandler.ListByHall)
+		api.GET("/reviews/hall/:hall_id/stats", reviewHandler.GetHallStats)
 
 		// Protected mutating routes (admin only)
 		admin := api.Group("/admin")
@@ -151,6 +151,8 @@ func main() {
 			secure.GET("/me", userHandler.GetCurrentUser)
 			// Update current user profile
 			secure.PUT("/me", userHandler.UpdateSelf)
+			// Upload profile picture
+			secure.POST("/me/photo", uploadHandler.Image)
 
 			// Bookings
 			secure.POST("/bookings", bookingHandler.Create)
