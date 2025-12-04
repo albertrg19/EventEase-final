@@ -35,6 +35,7 @@ func main() {
 		&models.AdminActivity{},
 		&models.Favorite{},
 		&models.Review{},
+		&models.Message{},
 	); err != nil {
 		log.Fatalf("auto migration failed: %v", err)
 	}
@@ -91,6 +92,7 @@ func main() {
 		activityHandler := handlers.NewAdminActivityHandler(db)
 		favoriteHandler := handlers.NewFavoriteHandler(db)
 		reviewHandler := handlers.NewReviewHandler(db)
+		chatHandler := handlers.NewChatHandler(db)
 
 		api.GET("/categories", catHandler.List)
 		api.GET("/halls", hallHandler.List)
@@ -170,7 +172,15 @@ func main() {
 			secure.POST("/reviews", reviewHandler.Create)
 			secure.PUT("/reviews/:id", reviewHandler.Update)
 			secure.DELETE("/reviews/:id", reviewHandler.Delete)
+
+			// Chat (booking-scoped) - REST endpoints
+			secure.GET("/chat/bookings/:booking_id/messages", chatHandler.GetMessages)
+			secure.POST("/chat/bookings/:booking_id/messages", chatHandler.SendMessage)
+			secure.GET("/chat/unread-count", chatHandler.GetUnreadCount)
 		}
+
+		// WebSocket endpoint (handles auth manually via query param)
+		api.GET("/chat/bookings/:booking_id/ws", chatHandler.HandleWebSocket)
 	}
 
 	addr := ":8080"
