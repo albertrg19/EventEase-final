@@ -36,6 +36,9 @@ func main() {
 		&models.Favorite{},
 		&models.Review{},
 		&models.Message{},
+		&models.MessageReadReceipt{},
+		&models.ChatTemplate{},
+		&models.AutoReplyConfig{},
 	); err != nil {
 		log.Fatalf("auto migration failed: %v", err)
 	}
@@ -55,6 +58,10 @@ func main() {
 	defer backupHandler.StopScheduler()
 
 	r := gin.Default()
+	
+	// Increase multipart form memory limit for file uploads (default is 32MB, set to 50MB)
+	r.MaxMultipartMemory = 50 << 20 // 50 MB
+	
 	r.Use(middleware.CORS())
 	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.RateLimiter())
@@ -93,6 +100,8 @@ func main() {
 		favoriteHandler := handlers.NewFavoriteHandler(db)
 		reviewHandler := handlers.NewReviewHandler(db)
 		chatHandler := handlers.NewChatHandler(db)
+		chatTemplateHandler := handlers.NewChatTemplateHandler(db)
+		autoReplyHandler := handlers.NewAutoReplyHandler(db)
 
 		api.GET("/categories", catHandler.List)
 		api.GET("/halls", hallHandler.List)
@@ -143,6 +152,15 @@ func main() {
 			admin.GET("/backups", backupHandler.ListBackups)
 			admin.GET("/backups/:filename", backupHandler.DownloadBackup)
 			admin.DELETE("/backups/:filename", backupHandler.DeleteBackup)
+			
+			// Chat templates management (admin only)
+			admin.POST("/chat/templates", chatTemplateHandler.CreateTemplate)
+			admin.PUT("/chat/templates/:id", chatTemplateHandler.UpdateTemplate)
+			admin.DELETE("/chat/templates/:id", chatTemplateHandler.DeleteTemplate)
+			
+			// Auto-reply configuration (admin only)
+			admin.GET("/chat/auto-reply", autoReplyHandler.GetAutoReplyConfig)
+			admin.PUT("/chat/auto-reply", autoReplyHandler.UpdateAutoReplyConfig)
 		}
 
 		// Authenticated routes (admin and customer)
@@ -176,7 +194,17 @@ func main() {
 			// Chat (booking-scoped) - REST endpoints
 			secure.GET("/chat/bookings/:booking_id/messages", chatHandler.GetMessages)
 			secure.POST("/chat/bookings/:booking_id/messages", chatHandler.SendMessage)
+			secure.PUT("/chat/messages/:message_id", chatHandler.UpdateMessage)
+			secure.DELETE("/chat/messages/:message_id", chatHandler.DeleteMessage)
+			secure.GET("/chat/bookings/:booking_id/search", chatHandler.SearchMessages)
 			secure.GET("/chat/unread-count", chatHandler.GetUnreadCount)
+			
+			// Chat file uploads (accessible to both admin and customer)
+			secure.POST("/chat/uploads", uploadHandler.ChatFile)
+			
+			// Chat templates (admin only for creation, but all can view)
+			secure.GET("/chat/templates", chatTemplateHandler.ListTemplates)
+			secure.GET("/chat/templates/:id", chatTemplateHandler.GetTemplate)
 		}
 
 		// WebSocket endpoint (handles auth manually via query param)
@@ -184,7 +212,18 @@ func main() {
 	}
 
 	addr := ":8080"
-	if err := r.Run(addr); err != nil {
+	
+	// Create HTTP server with increased timeouts for file uploads
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      r,
+		ReadTimeout:  60 * time.Second,  // Increased for large file uploads
+		WriteTimeout: 60 * time.Second,  // Increased for large file uploads
+		IdleTimeout:  120 * time.Second,
+	}
+	
+	log.Printf("Server starting on %s", addr)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server failed: %v", err)
 	}
 }
