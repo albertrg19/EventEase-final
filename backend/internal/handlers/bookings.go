@@ -95,6 +95,20 @@ func (h *BookingHandler) Create(c *gin.Context) {
 		return
 	}
 	h.logActivity(c, "create", "booking", &item.ID, fmt.Sprintf("Created booking: %s on %s", item.EventName, item.EventDate.Format("2006-01-02")))
+	
+	// Auto-create invoice if booking is created with approved status
+	if item.Status == models.BookingStatusApproved {
+		go func() {
+			inv, err := CreateInvoiceForBooking(h.db, item.ID, h.emailService)
+			if err != nil {
+				// Log error but don't fail the booking creation
+				fmt.Printf("ERROR: Failed to auto-create invoice for booking #%d: %v\n", item.ID, err)
+			} else {
+				fmt.Printf("SUCCESS: Auto-created invoice #%d for booking #%d (Total: ₱%.2f)\n", inv.ID, item.ID, inv.TotalAmount)
+			}
+		}()
+	}
+	
 	c.JSON(http.StatusCreated, item)
 }
 
@@ -132,6 +146,9 @@ func (h *BookingHandler) Update(c *gin.Context) {
 			return
 		}
 	}
+	// Save old status BEFORE updating
+	oldStatus := item.Status
+	
 	item.CustomerID = req.CustomerID
 	item.UserID = req.UserID
 	item.EventName = req.EventName
@@ -143,15 +160,47 @@ func (h *BookingHandler) Update(c *gin.Context) {
 	if req.Status != "" {
 		item.Status = models.BookingStatus(req.Status)
 	}
-	oldStatus := item.Status
 	if err := h.db.Save(&item).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "update failed"})
 		return
 	}
 	h.logActivity(c, "update", "booking", &item.ID, fmt.Sprintf("Updated booking: %s, status: %s", item.EventName, item.Status))
 
+	// Check if status changed to approved
+	statusChanged := req.Status != "" && models.BookingStatus(req.Status) != oldStatus
+	isNowApproved := item.Status == models.BookingStatusApproved && oldStatus != models.BookingStatusApproved
+
+	// Auto-create invoice when booking is approved
+	if isNowApproved {
+		fmt.Printf("DEBUG: Booking #%d status changed to approved (old: %s, new: %s)\n", item.ID, oldStatus, item.Status)
+		go func() {
+			inv, err := CreateInvoiceForBooking(h.db, item.ID, h.emailService)
+			if err != nil {
+				// Log error but don't fail the booking update
+				fmt.Printf("ERROR: Failed to auto-create invoice for booking #%d: %v\n", item.ID, err)
+			} else {
+				fmt.Printf("SUCCESS: Auto-created invoice #%d for booking #%d (Total: ₱%.2f)\n", inv.ID, item.ID, inv.TotalAmount)
+			}
+		}()
+	} else if item.Status == models.BookingStatusApproved {
+		// Also check if invoice exists for already-approved bookings
+		var invoiceCount int64
+		h.db.Model(&models.Invoice{}).Where("booking_id = ?", item.ID).Count(&invoiceCount)
+		if invoiceCount == 0 {
+			fmt.Printf("DEBUG: Booking #%d is approved but has no invoice. Creating one...\n", item.ID)
+			go func() {
+				inv, err := CreateInvoiceForBooking(h.db, item.ID, h.emailService)
+				if err != nil {
+					fmt.Printf("ERROR: Failed to create missing invoice for booking #%d: %v\n", item.ID, err)
+				} else {
+					fmt.Printf("SUCCESS: Created missing invoice #%d for booking #%d (Total: ₱%.2f)\n", inv.ID, item.ID, inv.TotalAmount)
+				}
+			}()
+		}
+	}
+
 	// Send email notification if status changed
-	if req.Status != "" && models.BookingStatus(req.Status) != oldStatus {
+	if statusChanged {
 		go func() {
 			var user models.User
 			var hall models.EventHall

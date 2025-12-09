@@ -107,6 +107,7 @@ func main() {
 		api.GET("/halls", hallHandler.List)
 		api.GET("/events", eventHandler.List)
 		api.GET("/invoices", invoiceHandler.List)
+		api.GET("/invoices/:id", invoiceHandler.Get)
 		api.GET("/bookings", bookingHandler.List)
 		api.GET("/categories/:id", catHandler.Get)
 		api.GET("/halls/:id", hallHandler.Get)
@@ -140,6 +141,9 @@ func main() {
 			admin.DELETE("/events/:id", eventHandler.Delete)
 
 			admin.POST("/invoices", invoiceHandler.Create)
+			admin.POST("/invoices/create-missing", invoiceHandler.CreateMissingInvoices)
+			admin.GET("/invoices/:id", invoiceHandler.Get)
+			admin.PUT("/invoices/:id", invoiceHandler.Update)
 
 			// Uploads
 			admin.POST("/uploads/images", uploadHandler.Image)
