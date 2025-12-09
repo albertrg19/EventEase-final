@@ -58,10 +58,10 @@ func main() {
 	defer backupHandler.StopScheduler()
 
 	r := gin.Default()
-	
+
 	// Increase multipart form memory limit for file uploads (default is 32MB, set to 50MB)
 	r.MaxMultipartMemory = 50 << 20 // 50 MB
-	
+
 	r.Use(middleware.CORS())
 	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.RateLimiter())
@@ -72,9 +72,12 @@ func main() {
 
 	// Health endpoints
 	healthHandler := handlers.NewHealthHandler(db)
+	// Health endpoints
+	healthHandler := handlers.NewHealthHandler(db)
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	r.GET("/api/health/status", healthHandler.Status)
 	r.GET("/api/health/status", healthHandler.Status)
 
 	// API routes
@@ -156,12 +159,12 @@ func main() {
 			admin.GET("/backups", backupHandler.ListBackups)
 			admin.GET("/backups/:filename", backupHandler.DownloadBackup)
 			admin.DELETE("/backups/:filename", backupHandler.DeleteBackup)
-			
+
 			// Chat templates management (admin only)
 			admin.POST("/chat/templates", chatTemplateHandler.CreateTemplate)
 			admin.PUT("/chat/templates/:id", chatTemplateHandler.UpdateTemplate)
 			admin.DELETE("/chat/templates/:id", chatTemplateHandler.DeleteTemplate)
-			
+
 			// Auto-reply configuration (admin only)
 			admin.GET("/chat/auto-reply", autoReplyHandler.GetAutoReplyConfig)
 			admin.PUT("/chat/auto-reply", autoReplyHandler.UpdateAutoReplyConfig)
@@ -202,10 +205,10 @@ func main() {
 			secure.DELETE("/chat/messages/:message_id", chatHandler.DeleteMessage)
 			secure.GET("/chat/bookings/:booking_id/search", chatHandler.SearchMessages)
 			secure.GET("/chat/unread-count", chatHandler.GetUnreadCount)
-			
+
 			// Chat file uploads (accessible to both admin and customer)
 			secure.POST("/chat/uploads", uploadHandler.ChatFile)
-			
+
 			// Chat templates (admin only for creation, but all can view)
 			secure.GET("/chat/templates", chatTemplateHandler.ListTemplates)
 			secure.GET("/chat/templates/:id", chatTemplateHandler.GetTemplate)
@@ -216,16 +219,16 @@ func main() {
 	}
 
 	addr := ":8080"
-	
+
 	// Create HTTP server with increased timeouts for file uploads
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      r,
-		ReadTimeout:  60 * time.Second,  // Increased for large file uploads
-		WriteTimeout: 60 * time.Second,  // Increased for large file uploads
+		ReadTimeout:  60 * time.Second, // Increased for large file uploads
+		WriteTimeout: 60 * time.Second, // Increased for large file uploads
 		IdleTimeout:  120 * time.Second,
 	}
-	
+
 	log.Printf("Server starting on %s", addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server failed: %v", err)

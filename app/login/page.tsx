@@ -65,11 +65,11 @@ function LoginForm() {
           if (role === 'admin') {
             router.push('/admin/dashboard');
           } else {
-            router.push('/customer/bookings');
+            router.push('/customer/dashboard');
           }
         } catch {
           // Fallback to customer dashboard if token decode fails
-          router.push('/customer/bookings');
+          router.push('/customer/dashboard');
         }
       }
     } catch (err: any) {

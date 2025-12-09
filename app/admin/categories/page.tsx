@@ -14,50 +14,6 @@ interface Category {
   image?: string;
 }
 
-const stripApiPath = (apiUrl: string) => {
-  try {
-    const parsed = new URL(apiUrl);
-    parsed.pathname = '';
-    parsed.search = '';
-    parsed.hash = '';
-    return parsed.origin;
-  } catch {
-    return apiUrl.replace(/\/api\b.*$/, '');
-  }
-};
-
-const resolveImageUrl = (rawUrl: string | undefined | null, assetBase: string) => {
-  if (!rawUrl) return undefined;
-  const trimmed = rawUrl.trim();
-  if (!trimmed) return undefined;
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-    return trimmed;
-  }
-  if (trimmed.startsWith('//')) {
-    return `http:${trimmed}`;
-  }
-  const ensuredBase = assetBase.replace(/\/$/, '');
-  if (trimmed.startsWith('/')) {
-    return `${ensuredBase}${trimmed}`;
-  }
-  return `${ensuredBase}/${trimmed.replace(/^\/+/, '')}`;
-};
-
-const normalizeImageForPayload = (rawUrl: string | undefined | null, assetBase: string) => {
-  if (!rawUrl) return null;
-  const trimmed = rawUrl.trim();
-  if (!trimmed) return null;
-  const ensuredBase = assetBase.replace(/\/$/, '');
-  if (trimmed.startsWith(ensuredBase)) {
-    const relative = trimmed.slice(ensuredBase.length);
-    return relative.startsWith('/') ? relative : `/${relative}`;
-  }
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-    return trimmed;
-  }
-  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
-};
-
 export default function CategoryManagementPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,6 +25,11 @@ export default function CategoryManagementPage() {
   const [imageError, setImageError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [inlineEditId, setInlineEditId] = useState<number | null>(null);
+  const [inlineForm, setInlineForm] = useState({ name: '', description: '' });
+  const [inlineSaving, setInlineSaving] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const api = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
   const assetBase = process.env.NEXT_PUBLIC_ASSET_BASE_URL || stripApiPath(api);
   const previewObjectUrlRef = useRef<string | null>(null);
@@ -160,9 +121,8 @@ export default function CategoryManagementPage() {
         throw new Error(data.error || 'Upload failed');
       }
       const data = await res.json();
-      const url = data.url?.startsWith('http')
-        ? data.url
-        : resolveImageUrl(data.url, assetBase) || '';
+      // Server returns a relative URL (/uploads/filename). Prefix with api if absolute needed by browser from Next client.
+      const url = data.url?.startsWith('http') ? data.url : `${api}${data.url}`;
       setFormData(fd => ({ ...fd, image: url }));
       if (url) {
         setPreview(url);
@@ -227,9 +187,109 @@ export default function CategoryManagementPage() {
       });
       if (res.ok) {
         fetchCategories();
+        setSelectedIds((prev) => prev.filter((selectedId) => selectedId !== id));
       }
     } catch (error) {
       console.error('Failed to delete category:', error);
+    }
+  };
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((selectedId) => selectedId !== id) : [...prev, id]));
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.length === categories.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(categories.map((category) => category.id));
+    }
+  };
+
+  const hasSelection = selectedIds.length > 0;
+
+  const handleBulkDelete = async () => {
+    if (!hasSelection) return;
+    if (!confirm(`Delete ${selectedIds.length} selected categories? This cannot be undone.`)) return;
+    try {
+      setBulkDeleting(true);
+      const token = localStorage.getItem('token');
+      for (const id of selectedIds) {
+        await fetch(`${api}/api/admin/categories/${id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      }
+      setSelectedIds([]);
+      fetchCategories();
+    } catch (error) {
+      console.error('Bulk delete failed:', error);
+      alert('Failed to delete some categories. Please try again.');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  const startInlineEdit = (category: Category) => {
+    setInlineEditId(category.id);
+    setInlineForm({
+      name: category.name || '',
+      description: category.description || '',
+    });
+  };
+
+  const cancelInlineEdit = () => {
+    setInlineEditId(null);
+    setInlineForm({ name: '', description: '' });
+    setInlineSaving(false);
+  };
+
+  const saveInlineEdit = async () => {
+    if (!inlineEditId) return;
+    if (!inlineForm.name.trim()) {
+      alert('Category name is required.');
+      return;
+    }
+    const category = categories.find((c) => c.id === inlineEditId);
+    if (!category) return;
+    try {
+      setInlineSaving(true);
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${api}/api/admin/categories/${inlineEditId}`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: inlineForm.name.trim(),
+          description: inlineForm.description?.trim() || null,
+          image: normalizeImageForPayload(category.image, assetBase),
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to save changes');
+      }
+      const responseData = await res.json().catch(() => null);
+      setCategories((prev) =>
+        prev.map((item) =>
+          item.id === inlineEditId
+            ? {
+              ...item,
+              name: responseData?.name ?? responseData?.Name ?? inlineForm.name,
+              description: responseData?.description ?? responseData?.Description ?? inlineForm.description,
+              image: resolveImageUrl(responseData?.image ?? responseData?.Image ?? item.image, assetBase),
+            }
+            : item,
+        ),
+      );
+      cancelInlineEdit();
+    } catch (error: any) {
+      console.error('Inline edit failed:', error);
+      alert(error.message || 'Unable to update category.');
+    } finally {
+      setInlineSaving(false);
     }
   };
 
@@ -346,6 +406,35 @@ export default function CategoryManagementPage() {
           <CardTitle>All Categories</CardTitle>
         </CardHeader>
         <CardContent>
+          {hasSelection && (
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4 p-3 border border-yellow-200 rounded-lg bg-yellow-50">
+              <div>
+                <p className="text-sm font-semibold text-yellow-900">{selectedIds.length} categories selected</p>
+                <p className="text-xs text-yellow-700">Apply quick bulk actions to streamline your workflow.</p>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setSelectedIds([])}>
+                  Clear
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleBulkDelete}
+                  disabled={bulkDeleting}
+                  className="bg-red-600 hover:bg-red-500"
+                >
+                  {bulkDeleting ? (
+                    <span className="inline-flex items-center gap-1 text-white">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Deleting...
+                    </span>
+                  ) : (
+                    'Delete Selected'
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
           {loading ? (
             <div className="text-center py-12">
               <Loader2 className="h-8 w-8 animate-spin mx-auto text-gray-400 mb-4" />
@@ -361,6 +450,14 @@ export default function CategoryManagementPage() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-gray-200">
+                    <th className="py-3 px-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.length === categories.length && categories.length > 0}
+                        onChange={toggleSelectAll}
+                        className="h-4 w-4 accent-blue-600"
+                      />
+                    </th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Image</th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Name</th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Description</th>
@@ -370,6 +467,14 @@ export default function CategoryManagementPage() {
                 <tbody>
                   {categories.map((category, index) => (
                     <tr key={category.id ?? `category-${index}`} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="py-3 px-4">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(category.id)}
+                          onChange={() => toggleSelect(category.id)}
+                          className="h-4 w-4 accent-blue-600"
+                        />
+                      </td>
                       <td className="py-3 px-4">
                         {category.image ? (
                           <img
@@ -384,19 +489,59 @@ export default function CategoryManagementPage() {
                           </div>
                         )}
                       </td>
-                      <td className="py-3 px-4 font-medium">{category.name || '-'}</td>
-                      <td className="py-3 px-4 text-gray-600">{category.description || '-'}</td>
+                      <td className="py-3 px-4 font-medium">
+                        {inlineEditId === category.id ? (
+                          <Input
+                            value={inlineForm.name}
+                            onChange={(e) => setInlineForm((prev) => ({ ...prev, name: e.target.value }))}
+                            className="h-9"
+                          />
+                        ) : (
+                          category.name || '-'
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-gray-600">
+                        {inlineEditId === category.id ? (
+                          <Input
+                            value={inlineForm.description}
+                            onChange={(e) => setInlineForm((prev) => ({ ...prev, description: e.target.value }))}
+                            className="h-9"
+                          />
+                        ) : (
+                          category.description || '-'
+                        )}
+                      </td>
                       <td className="py-3 px-4">
-                        <div className="flex gap-2">
-                          <Button variant="outline" size="sm" onClick={() => openEditDialog(category)} className="gap-1">
-                            <Edit className="h-3 w-3" />
-                            Edit
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={() => handleDelete(category.id)} className="gap-1 text-red-600 hover:text-red-700">
-                            <Trash2 className="h-3 w-3" />
-                            Delete
-                          </Button>
-                        </div>
+                        {inlineEditId === category.id ? (
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              className="bg-blue-600 hover:bg-blue-500 text-white"
+                              disabled={inlineSaving}
+                              onClick={saveInlineEdit}
+                            >
+                              {inlineSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={cancelInlineEdit}>
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex gap-2">
+                            <Button variant="outline" size="sm" onClick={() => startInlineEdit(category)} className="gap-1">
+                              <Edit className="h-3 w-3" />
+                              Quick Edit
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => openEditDialog(category)} className="gap-1">
+                              <Grid className="h-3 w-3" />
+                              Modal Edit
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => handleDelete(category.id)} className="gap-1 text-red-600 hover:text-red-700">
+                              <Trash2 className="h-3 w-3" />
+                              Delete
+                            </Button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}

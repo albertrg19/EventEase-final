@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { 
   Home, Building2, Calendar, Receipt, Grid, Settings, LogOut, 
-  Bell, Search, Menu, X, User, Users, HelpCircle
+  Bell, Search, Menu, X, User, Users, HelpCircle, CheckCircle2, Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,6 +18,137 @@ interface UserData {
   role: string;
 }
 
+type NotificationType = 'booking' | 'invoice' | 'system';
+
+interface NotificationItem {
+  id: string;
+  type: NotificationType;
+  title: string;
+  description: string;
+  date: string;
+  link: string;
+  read?: boolean;
+}
+
+type RoleKey = 'superAdmin' | 'manager' | 'support';
+
+const ROLE_MATRIX_STORAGE_KEY = 'admin-role-matrix';
+const ROLE_ASSIGNMENTS_STORAGE_KEY = 'admin-role-assignments';
+
+const defaultRoleMatrix: Record<RoleKey, string[]> = {
+  superAdmin: ['dashboard', 'users', 'bookings', 'categories', 'halls', 'events', 'invoices', 'settings'],
+  manager: ['dashboard', 'bookings', 'halls', 'events', 'invoices', 'categories'],
+  support: ['dashboard', 'bookings', 'categories'],
+};
+
+type RoleAssignments = Record<string, RoleKey>;
+
+type MenuItem = {
+  icon: typeof Home;
+  label: string;
+  href: string;
+  module: string;
+};
+
+const baseMenuItems: MenuItem[] = [
+  { icon: Home, label: 'Dashboard', href: '/admin/dashboard', module: 'dashboard' },
+  { icon: Users, label: 'Manage Users', href: '/admin/users', module: 'users' },
+  { icon: Calendar, label: 'Manage Bookings', href: '/admin/bookings', module: 'bookings' },
+  { icon: Grid, label: 'Manage Event Categories', href: '/admin/categories', module: 'categories' },
+  { icon: Building2, label: 'Manage Event Halls', href: '/admin/halls', module: 'halls' },
+  { icon: Calendar, label: 'Event Management', href: '/admin/events', module: 'events' },
+  { icon: Receipt, label: 'Invoice Management', href: '/admin/invoices', module: 'invoices' },
+  { icon: Settings, label: 'Settings', href: '/admin/settings', module: 'settings' },
+];
+
+const NotificationPanel = ({
+  open,
+  onClose,
+  notifications,
+  markAllRead,
+  toggleRead,
+  refreshing,
+}: {
+  open: boolean;
+  onClose: () => void;
+  notifications: NotificationItem[];
+  markAllRead: () => void;
+  toggleRead: (id: string) => void;
+  refreshing: boolean;
+}) => {
+  return (
+    <div
+      className={`fixed inset-0 z-50 transition-opacity ${open ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}
+    >
+      <div className="absolute inset-0 bg-black/40" onClick={onClose}></div>
+      <div
+        className={`absolute right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl transform transition-transform duration-300 ${
+          open ? 'translate-x-0' : 'translate-x-full'
+        }`}
+      >
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Notifications</h2>
+            <p className="text-sm text-gray-500">{notifications.length} alerts</p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={markAllRead} className="text-xs">
+              Mark all read
+            </Button>
+            <Button variant="ghost" size="icon" onClick={onClose}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+        <div className="p-4 space-y-3 overflow-y-auto h-[calc(100%-72px)] bg-gray-50">
+          {notifications.length === 0 ? (
+            <div className="text-center py-12 text-gray-500">
+              <CheckCircle2 className="h-10 w-10 mx-auto text-emerald-500 mb-3" />
+              <p>All caught up! No new notifications.</p>
+            </div>
+          ) : (
+            notifications.map((item) => {
+              const isBooking = item.type === 'booking';
+              const iconClass = isBooking ? 'text-blue-600 bg-blue-100' : item.type === 'invoice' ? 'text-amber-600 bg-amber-100' : 'text-purple-600 bg-purple-100';
+              const IconComponent = isBooking ? Calendar : item.type === 'invoice' ? Receipt : Bell;
+              return (
+                <div
+                  key={item.id}
+                  className={`bg-white border rounded-xl p-4 shadow-sm hover:shadow-md transition cursor-pointer ${
+                    item.read ? 'opacity-70' : ''
+                  }`}
+                  onClick={() => toggleRead(item.id)}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className={`p-2 rounded-lg ${iconClass}`}>
+                      <IconComponent className="h-4 w-4" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-semibold text-gray-900">{item.title}</p>
+                      <p className="text-sm text-gray-600">{item.description}</p>
+                      <p className="text-xs text-gray-400 mt-1">{new Date(item.date).toLocaleString()}</p>
+                      <Link href={item.link} className="text-xs text-blue-600 font-semibold mt-2 inline-block">
+                        View details →
+                      </Link>
+                    </div>
+                    {!item.read && <span className="w-2 h-2 bg-blue-500 rounded-full mt-2"></span>}
+                  </div>
+                </div>
+              );
+            })
+          )}
+          {refreshing && (
+            <div className="flex items-center justify-center gap-2 text-sm text-gray-500">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Refreshing…
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -26,7 +157,46 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [searchQuery, setSearchQuery] = useState('');
   const [user, setUser] = useState<UserData | null>(null);
   const [loadingUser, setLoadingUser] = useState(true);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [refreshingNotifications, setRefreshingNotifications] = useState(false);
+  const [roleMatrix, setRoleMatrix] = useState(defaultRoleMatrix);
+  const [roleAssignments, setRoleAssignments] = useState<RoleAssignments>({});
   const api = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const storedMatrix = localStorage.getItem(ROLE_MATRIX_STORAGE_KEY);
+      if (storedMatrix) {
+        setRoleMatrix((prev) => ({ ...prev, ...JSON.parse(storedMatrix) }));
+      }
+      const storedAssignments = localStorage.getItem(ROLE_ASSIGNMENTS_STORAGE_KEY);
+      if (storedAssignments) {
+        setRoleAssignments(JSON.parse(storedAssignments));
+      }
+    } catch (error) {
+      console.warn('Failed to load admin roles:', error);
+    }
+    const handler = (event: StorageEvent) => {
+      if (event.key === ROLE_MATRIX_STORAGE_KEY && event.newValue) {
+        try {
+          setRoleMatrix((prev) => ({ ...prev, ...JSON.parse(event.newValue!) }));
+        } catch {
+          /* noop */
+        }
+      }
+      if (event.key === ROLE_ASSIGNMENTS_STORAGE_KEY && event.newValue) {
+        try {
+          setRoleAssignments(JSON.parse(event.newValue));
+        } catch {
+          /* noop */
+        }
+      }
+    };
+    window.addEventListener('storage', handler);
+    return () => window.removeEventListener('storage', handler);
+  }, []);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -38,7 +208,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     try {
       const payload = JSON.parse(atob(token.split('.')[1] || ''));
       if (payload?.role !== 'admin') {
-        router.push('/customer/bookings');
+        router.push('/customer/dashboard');
         return;
       }
     } catch {}
@@ -53,36 +223,229 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         return;
       }
 
+      console.log('Fetching user profile from:', `${api}/api/me`);
       const res = await fetch(`${api}/api/me`, {
         headers: { 'Authorization': `Bearer ${token}` },
       });
+      
+      console.log('Response status:', res.status, res.statusText);
+      
       if (res.ok) {
         const userData = await res.json();
-        setUser(userData);
+        console.log('User data fetched successfully:', userData);
+        // Handle both lowercase (with JSON tags) and capitalized (without JSON tags) field names
+        const name = userData.name || userData.Name;
+        const email = userData.email || userData.Email;
+        const role = userData.role || userData.Role;
+        const id = userData.id || userData.ID;
+        
+        if (userData && (name || email)) {
+          setUser({
+            id: id || 0,
+            name: name || email || 'Super Admin',
+            email: email || 'superadmin@gmail.com',
+            role: role || 'admin',
+            phone: userData.phone || userData.Phone,
+          });
+        } else {
+          console.warn('User data missing name/email:', userData);
+          // Try to get from token as fallback
+          try {
+            const payload = JSON.parse(atob(token.split('.')[1] || ''));
+            setUser({
+              id: Number(payload.sub),
+              name: 'Super Admin',
+              email: payload.email || 'superadmin@gmail.com',
+              role: payload.role || 'admin',
+            });
+          } catch (e) {
+            setUser({
+              id: 0,
+              name: 'Super Admin',
+              email: 'superadmin@gmail.com',
+              role: 'admin',
+            });
+          }
+        }
+      } else {
+        const errorData = await res.json().catch(() => ({}));
+        console.error('Failed to fetch user profile:', res.status, res.statusText, errorData);
+        // Try to fetch user by ID from admin endpoint as fallback
+        try {
+          const payload = JSON.parse(atob(token.split('.')[1] || ''));
+          console.log('Token payload:', payload);
+          if (payload?.sub) {
+            const userRes = await fetch(`${api}/api/admin/users/${payload.sub}`, {
+              headers: { 'Authorization': `Bearer ${token}` },
+            });
+            if (userRes.ok) {
+              const userData = await userRes.json();
+              console.log('User data from admin endpoint:', userData);
+              setUser(userData);
+            } else {
+              // Set default super admin data
+              setUser({
+                id: Number(payload.sub),
+                name: 'Super Admin',
+                email: 'superadmin@gmail.com',
+                role: payload.role || 'admin',
+              });
+            }
+          } else {
+            // No user ID in token, set default
+            setUser({
+              id: 0,
+              name: 'Super Admin',
+              email: 'superadmin@gmail.com',
+              role: 'admin',
+            });
+          }
+        } catch (e) {
+          console.error('Failed to parse token or fetch user:', e);
+          // Set default super admin
+          setUser({
+            id: 0,
+            name: 'Super Admin',
+            email: 'superadmin@gmail.com',
+            role: 'admin',
+          });
+        }
       }
     } catch (error) {
       console.error('Failed to fetch user profile:', error);
+      // Set default on error
+      setUser({
+        id: 0,
+        name: 'Super Admin',
+        email: 'superadmin@gmail.com',
+        role: 'admin',
+      });
     } finally {
       setLoadingUser(false);
     }
   };
+
+  const fetchNotifications = async () => {
+    try {
+      setRefreshingNotifications(true);
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setNotifications([]);
+        return;
+      }
+      const headers: HeadersInit = { Authorization: `Bearer ${token}` };
+      const [bookingsRes, invoicesRes] = await Promise.all([
+        fetch(`${api}/api/bookings`, { headers }),
+        fetch(`${api}/api/invoices`, { headers }).catch(() => ({ ok: false })),
+      ]);
+
+      const bookingsData = bookingsRes.ok ? await bookingsRes.json() : [];
+      const invoicesData = invoicesRes instanceof Response && invoicesRes.ok ? await invoicesRes.json() : [];
+
+      const now = new Date();
+      const twoDaysFromNow = new Date(now);
+      twoDaysFromNow.setDate(now.getDate() + 2);
+
+      const bookingAlerts: NotificationItem[] = (bookingsData || [])
+        .filter((booking: any) => {
+          const status = (booking.status || booking.Status || '').toLowerCase();
+          const date = booking.event_date || booking.EventDate;
+          const eventDate = date ? new Date(date) : null;
+          const isUpcoming = eventDate && eventDate <= twoDaysFromNow;
+          return status === 'pending' || isUpcoming;
+        })
+        .slice(0, 10)
+        .map((booking: any) => {
+          const status = (booking.status || booking.Status || '').toLowerCase();
+          return {
+            id: `booking-${booking.id || booking.ID}`,
+            type: 'booking' as const,
+            title: status === 'pending' ? 'Booking awaiting approval' : 'Upcoming event',
+            description: `${booking.event_name || booking.EventName || 'Event'} on ${new Date(
+              booking.event_date || booking.EventDate,
+            ).toLocaleDateString()}`,
+            date: booking.created_at || booking.CreatedAt || booking.event_date || booking.EventDate || new Date().toISOString(),
+            link: '/admin/bookings',
+          };
+        });
+
+      const invoiceAlerts: NotificationItem[] = (invoicesData || [])
+        .filter((inv: any) => {
+          const createdAt = inv.created_at || inv.CreatedAt;
+          if (!createdAt) return false;
+          const createdDate = new Date(createdAt);
+          const ageInDays = (now.getTime() - createdDate.getTime()) / (1000 * 60 * 60 * 24);
+          return ageInDays <= 7;
+        })
+        .slice(0, 10)
+        .map((inv: any) => ({
+          id: `invoice-${inv.id || inv.ID}`,
+          type: 'invoice' as const,
+          title: 'Recent invoice issued',
+          description: `Invoice #${inv.id || inv.ID} totaling ₱${Number(inv.total_amount || inv.TotalAmount || 0).toFixed(2)}`,
+          date: inv.created_at || inv.CreatedAt || new Date().toISOString(),
+          link: '/admin/invoices',
+        }));
+
+      const newItems = [...bookingAlerts, ...invoiceAlerts].sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+      );
+
+      setNotifications((prev) => {
+        const readMap = new Map(prev.map((item) => [item.id, item.read]));
+        return newItems.map((item) => ({ ...item, read: readMap.get(item.id) ?? item.read ?? false }));
+      });
+    } catch (error) {
+      console.error('Failed to load notifications:', error);
+    } finally {
+      setRefreshingNotifications(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 60000);
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api]);
+
+  const unreadCount = useMemo(() => notifications.filter((n) => !n.read).length, [notifications]);
+
+  const markAllNotificationsRead = () => setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+  const toggleNotificationRead = (id: string) =>
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, read: !n.read } : n)),
+    );
+
+  const superAdminEmail = 'superadmin@gmail.com';
+
+  const effectiveRole: RoleKey = useMemo(() => {
+    if (!user || user.role !== 'admin') {
+      return 'support';
+    }
+    if (user.email === superAdminEmail) {
+      return 'superAdmin';
+    }
+    return roleAssignments[user.id] || 'manager';
+  }, [user, roleAssignments]);
+
+  const allowedModules = useMemo(() => {
+    if (!user || user.role !== 'admin') {
+      return baseMenuItems.map((item) => item.module);
+    }
+    return roleMatrix[effectiveRole] || roleMatrix.manager;
+  }, [user, roleMatrix, effectiveRole]);
+
+  const navigationItems = useMemo(() => {
+    const allowedSet = new Set(allowedModules);
+    return baseMenuItems.filter((item) => allowedSet.has(item.module));
+  }, [allowedModules]);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('remember');
     router.push('/login');
   };
-
-  const menuItems = [
-    { icon: Home, label: 'Dashboard', href: '/admin/dashboard' },
-    { icon: Users, label: 'Manage Users', href: '/admin/users' },
-    { icon: Calendar, label: 'Manage Bookings', href: '/admin/bookings' },
-    { icon: Grid, label: 'Manage Event Categories', href: '/admin/categories' },
-    { icon: Building2, label: 'Manage Event Halls', href: '/admin/halls' },
-    { icon: Calendar, label: 'Event Management', href: '/admin/events' },
-    { icon: Receipt, label: 'Invoice Management', href: '/admin/invoices' },
-    { icon: Settings, label: 'Settings', href: '/admin/settings' },
-  ];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50/30">
@@ -132,6 +495,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-700 rounded-full flex items-center justify-center text-white font-semibold shadow-lg ring-2 ring-white/20">
                     {loadingUser ? (
                       <div className="w-6 h-6 border-2 border-white/40 border-t-transparent rounded-full animate-spin"></div>
+                    ) : user?.name ? (
+                      <span className="text-sm font-bold">
+                        {user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                      </span>
                     ) : (
                       <User className="h-6 w-6 text-white" />
                     )}
@@ -148,8 +515,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                       </>
                     ) : user ? (
                       <>
-                        <p className="text-white font-semibold text-sm truncate">{user.name}</p>
-                        <p className="text-gray-400 text-xs capitalize mt-0.5">{user.role}</p>
+                        <p className="text-white font-semibold text-sm truncate">
+                          {user.name?.trim() || user.email || 'Loading...'}
+                        </p>
+                        <p className="text-gray-400 text-xs capitalize mt-0.5">{user.role || 'admin'}</p>
                         <div className="flex items-center gap-1.5 mt-1">
                           <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
                           <span className="text-xs text-gray-400">Online</span>
@@ -157,8 +526,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                       </>
                     ) : (
                       <>
-                        <p className="text-white font-semibold text-sm truncate">Admin User</p>
-                        <p className="text-gray-400 text-xs capitalize mt-0.5">Administrator</p>
+                        <p className="text-white font-semibold text-sm truncate">Loading...</p>
+                        <p className="text-gray-400 text-xs capitalize mt-0.5">Admin</p>
                         <div className="flex items-center gap-1.5 mt-1">
                           <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
                           <span className="text-xs text-gray-400">Online</span>
@@ -190,7 +559,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <div className="mb-4 flex-1 overflow-y-auto">
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3 px-2">General</p>
               <nav className="space-y-1.5">
-            {menuItems.map((item) => {
+            {navigationItems.map((item) => {
               const Icon = item.icon;
               const isActive = pathname === item.href;
               return (
@@ -222,9 +591,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   <button
                     className="p-2.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all relative"
                     title="Notifications"
+                    onClick={() => setNotificationsOpen(true)}
                   >
                     <Bell className="h-5 w-5" />
-                    <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full"></span>
+                    {unreadCount > 0 && (
+                      <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-4 bg-red-500 text-white text-[10px] font-semibold rounded-full flex items-center justify-center px-1">
+                        {unreadCount}
+                      </span>
+                    )}
                   </button>
                   <Link href="/admin/settings">
                     <button
@@ -253,9 +627,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   <button
                     className="p-2.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all relative"
                     title="Notifications"
+                    onClick={() => setNotificationsOpen(true)}
                   >
                     <Bell className="h-4 w-4" />
-                    <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-red-500 rounded-full"></span>
+                    {unreadCount > 0 && (
+                      <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-3.5 bg-red-500 text-white text-[9px] font-semibold rounded-full flex items-center justify-center px-1">
+                        {unreadCount}
+                      </span>
+                    )}
                   </button>
                   <Link href="/admin/settings">
                     <button
@@ -293,6 +672,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </div>
         </main>
       </div>
+
+      <NotificationPanel
+        open={notificationsOpen}
+        onClose={() => setNotificationsOpen(false)}
+        notifications={notifications}
+        markAllRead={markAllNotificationsRead}
+        toggleRead={toggleNotificationRead}
+        refreshing={refreshingNotifications}
+      />
     </div>
   );
 }

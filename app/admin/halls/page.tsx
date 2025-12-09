@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Building2, Plus, Edit, Trash2, Search, Loader2, Upload, Image as ImageIcon, X } from 'lucide-react';
+import { Building2, Plus, Edit, Trash2, Search, Loader2, Upload, Image as ImageIcon, X, Download } from 'lucide-react';
 
 interface Hall {
   id: number;
@@ -98,6 +98,12 @@ export default function HallManagementPage() {
   const [imageError, setImageError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [inlineEditId, setInlineEditId] = useState<number | null>(null);
+  const [inlineForm, setInlineForm] = useState({ name: '', location: '', price: 0 });
+  const [inlineSaving, setInlineSaving] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const api = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
   const assetBase = process.env.NEXT_PUBLIC_ASSET_BASE_URL || stripApiPath(api);
   const previewObjectUrlRef = useRef<string | null>(null);
@@ -262,12 +268,125 @@ export default function HallManagementPage() {
         headers: { 'Authorization': `Bearer ${token}` },
       });
       if (res.ok) {
-        fetchHalls();
+        setHalls((prev) => prev.filter((h) => h.id !== id));
+        setSelectedIds((prev) => prev.filter((i) => i !== id));
       }
     } catch (error) {
       console.error('Failed to delete hall:', error);
     }
   };
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]));
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.length === filteredHalls.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(filteredHalls.map((h) => h.id));
+    }
+  };
+
+  const hasSelection = selectedIds.length > 0;
+
+  const handleBulkDelete = async () => {
+    if (!hasSelection) return;
+    if (!confirm(`Delete ${selectedIds.length} halls? This cannot be undone.`)) return;
+    setBulkDeleting(true);
+    try {
+      const token = localStorage.getItem('token');
+      for (const id of selectedIds) {
+        await fetch(`${api}/api/admin/halls/${id}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+      }
+      setHalls((prev) => prev.filter((h) => !selectedIds.includes(h.id)));
+      setSelectedIds([]);
+    } catch (error) {
+      console.error('Bulk delete failed:', error);
+      alert('Some deletions failed. Please try again.');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  const startInlineEdit = (hall: Hall) => {
+    setInlineEditId(hall.id);
+    setInlineForm({ name: hall.name || '', location: hall.location || '', price: hall.price || 0 });
+  };
+
+  const cancelInlineEdit = () => {
+    setInlineEditId(null);
+    setInlineForm({ name: '', location: '', price: 0 });
+  };
+
+  const saveInlineEdit = async () => {
+    if (!inlineEditId) return;
+    if (!inlineForm.name.trim() || !inlineForm.location.trim()) {
+      alert('Name and location are required.');
+      return;
+    }
+    const hall = halls.find((h) => h.id === inlineEditId);
+    if (!hall) return;
+    setInlineSaving(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${api}/api/admin/halls/${inlineEditId}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: inlineForm.name.trim(),
+          location: inlineForm.location.trim(),
+          capacity: hall.capacity,
+          max_capacity: hall.max_capacity,
+          price: inlineForm.price,
+          description: hall.description || null,
+          photo: normalizeImageForPayload(hall.photo, assetBase),
+        }),
+      });
+      if (res.ok) {
+        setHalls((prev) =>
+          prev.map((h) =>
+            h.id === inlineEditId
+              ? { ...h, name: inlineForm.name, location: inlineForm.location, price: inlineForm.price }
+              : h
+          )
+        );
+        cancelInlineEdit();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Failed to save changes');
+      }
+    } catch (error) {
+      console.error('Inline edit failed:', error);
+      alert('Unable to update hall.');
+    } finally {
+      setInlineSaving(false);
+    }
+  };
+
+  const exportCSV = () => {
+    const headers = ['ID', 'Name', 'Location', 'Capacity', 'Max Capacity', 'Price'];
+    const rows = filteredHalls.map((h) => [h.id, h.name, h.location, h.capacity, h.max_capacity, h.price]);
+    const csvContent = [headers, ...rows].map((row) => row.join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `halls_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+  };
+
+  const filteredHalls = halls.filter((hall) => {
+    const name = (hall.name || '').toLowerCase();
+    const location = (hall.location || '').toLowerCase();
+    const query = searchQuery.toLowerCase();
+    return name.includes(query) || location.includes(query);
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -382,20 +501,66 @@ export default function HallManagementPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Hall Management</h1>
           <p className="text-gray-600 mt-1">Manage event halls and venues</p>
         </div>
-        <Button onClick={openAddDialog} className="bg-yellow-400 hover:bg-yellow-500 text-blue-950 gap-2">
-          <Plus className="h-4 w-4" />
-          Add New Hall
-        </Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Input
+              type="search"
+              placeholder="Search halls..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10 w-48"
+            />
+          </div>
+          <Button variant="outline" onClick={exportCSV} className="gap-2">
+            <Download className="h-4 w-4" />
+            Export
+          </Button>
+          <Button onClick={openAddDialog} className="bg-yellow-400 hover:bg-yellow-500 text-blue-950 gap-2">
+            <Plus className="h-4 w-4" />
+            Add Hall
+          </Button>
+        </div>
       </div>
+
+      {hasSelection && (
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4 border border-yellow-200 rounded-lg bg-yellow-50">
+          <div>
+            <p className="text-sm font-semibold text-yellow-900">{selectedIds.length} halls selected</p>
+            <p className="text-xs text-yellow-700">Apply bulk actions to selected items.</p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setSelectedIds([])}>
+              Clear
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleBulkDelete}
+              disabled={bulkDeleting}
+              className="bg-red-600 hover:bg-red-500"
+            >
+              {bulkDeleting ? (
+                <span className="inline-flex items-center gap-1 text-white">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Deleting...
+                </span>
+              ) : (
+                'Delete Selected'
+              )}
+            </Button>
+          </div>
+        </div>
+      )}
 
       <Card>
         <CardHeader>
-          <CardTitle>All Halls</CardTitle>
+          <CardTitle>All Halls ({filteredHalls.length})</CardTitle>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -403,7 +568,7 @@ export default function HallManagementPage() {
               <Loader2 className="h-8 w-8 animate-spin mx-auto text-gray-400 mb-4" />
               <p className="text-gray-500">Loading halls...</p>
             </div>
-          ) : halls.length === 0 ? (
+          ) : filteredHalls.length === 0 ? (
             <div className="text-center py-12">
               <Building2 className="h-16 w-16 mx-auto text-gray-400 mb-4" />
               <p className="text-gray-500">No halls available. Add a new hall to get started.</p>
@@ -413,6 +578,14 @@ export default function HallManagementPage() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-gray-200">
+                    <th className="py-3 px-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.length === filteredHalls.length && filteredHalls.length > 0}
+                        onChange={toggleSelectAll}
+                        className="h-4 w-4 accent-blue-600"
+                      />
+                    </th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Image</th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Name</th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Location</th>
@@ -422,30 +595,86 @@ export default function HallManagementPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {halls.map((hall, index) => (
+                  {filteredHalls.map((hall, index) => (
                     <tr key={hall.id ?? `hall-${index}`} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="py-3 px-4">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(hall.id)}
+                          onChange={() => toggleSelect(hall.id)}
+                          className="h-4 w-4 accent-blue-600"
+                        />
+                      </td>
                       <td className="py-3 px-4">
                         <HallImageCell photo={hall.photo} name={hall.name} />
                       </td>
-                      <td className="py-3 px-4 font-medium">{hall.name || '-'}</td>
-                      <td className="py-3 px-4 text-gray-600">{hall.location || '-'}</td>
+                      <td className="py-3 px-4 font-medium">
+                        {inlineEditId === hall.id ? (
+                          <Input
+                            value={inlineForm.name}
+                            onChange={(e) => setInlineForm((prev) => ({ ...prev, name: e.target.value }))}
+                            className="h-9"
+                          />
+                        ) : (
+                          hall.name || '-'
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-gray-600">
+                        {inlineEditId === hall.id ? (
+                          <Input
+                            value={inlineForm.location}
+                            onChange={(e) => setInlineForm((prev) => ({ ...prev, location: e.target.value }))}
+                            className="h-9"
+                          />
+                        ) : (
+                          hall.location || '-'
+                        )}
+                      </td>
                       <td className="py-3 px-4 text-gray-600">
                         {hall.max_capacity != null ? hall.max_capacity.toLocaleString() : '-'}
                       </td>
                       <td className="py-3 px-4 text-gray-600">
-                        {hall.price != null ? `₱${hall.price.toLocaleString()}` : '-'}
+                        {inlineEditId === hall.id ? (
+                          <Input
+                            type="number"
+                            value={inlineForm.price}
+                            onChange={(e) => setInlineForm((prev) => ({ ...prev, price: parseFloat(e.target.value) || 0 }))}
+                            className="h-9 w-24"
+                          />
+                        ) : (
+                          hall.price != null ? `₱${hall.price.toLocaleString()}` : '-'
+                        )}
                       </td>
                       <td className="py-3 px-4">
-                        <div className="flex gap-2">
-                          <Button variant="outline" size="sm" onClick={() => openEditDialog(hall)} className="gap-1">
-                            <Edit className="h-3 w-3" />
-                            Edit
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={() => handleDelete(hall.id)} className="gap-1 text-red-600 hover:text-red-700">
-                            <Trash2 className="h-3 w-3" />
-                            Delete
-                          </Button>
-                        </div>
+                        {inlineEditId === hall.id ? (
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              className="bg-blue-600 hover:bg-blue-500 text-white"
+                              disabled={inlineSaving}
+                              onClick={saveInlineEdit}
+                            >
+                              {inlineSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={cancelInlineEdit}>
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex gap-2">
+                            <Button variant="outline" size="sm" onClick={() => startInlineEdit(hall)} className="gap-1">
+                              <Edit className="h-3 w-3" />
+                              Quick
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => openEditDialog(hall)} className="gap-1">
+                              <Building2 className="h-3 w-3" />
+                              Full
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => handleDelete(hall.id)} className="gap-1 text-red-600 hover:text-red-700">
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
