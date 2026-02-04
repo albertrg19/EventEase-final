@@ -206,12 +206,34 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     }
     // Basic role guard using JWT payload
     try {
-      const payload = JSON.parse(atob(token.split('.')[1] || ''));
+      const tokenParts = token.split('.');
+      if (tokenParts.length !== 3) {
+        console.error('Invalid token format');
+        localStorage.removeItem('token');
+        router.push('/login');
+        return;
+      }
+      const payload = JSON.parse(atob(tokenParts[1] || ''));
+      
+      // Check token expiration
+      if (payload.exp && payload.exp < Date.now() / 1000) {
+        console.error('Token has expired');
+        localStorage.removeItem('token');
+        localStorage.removeItem('remember');
+        router.push('/login');
+        return;
+      }
+      
       if (payload?.role !== 'admin') {
         router.push('/customer/dashboard');
         return;
       }
-    } catch {}
+    } catch (e) {
+      console.error('Failed to parse token:', e);
+      localStorage.removeItem('token');
+      router.push('/login');
+      return;
+    }
     fetchUserProfile();
   }, [router]);
 
@@ -220,15 +242,61 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       const token = localStorage.getItem('token');
       if (!token) {
         setLoadingUser(false);
+        router.push('/login');
+        return;
+      }
+
+      // Validate token format and expiration before making request
+      try {
+        const tokenParts = token.trim().split('.');
+        if (tokenParts.length !== 3) {
+          throw new Error('Invalid token format');
+        }
+        const payload = JSON.parse(atob(tokenParts[1] || ''));
+        
+        // Check if token has required fields
+        if (!payload.sub && !payload.userId) {
+          throw new Error('Token missing user ID');
+        }
+        
+        // Check token expiration
+        if (payload.exp && payload.exp < Date.now() / 1000) {
+          throw new Error('Token expired');
+        }
+      } catch (tokenError) {
+        console.warn('Invalid or expired token:', tokenError);
+        localStorage.removeItem('token');
+        localStorage.removeItem('remember');
+        setLoadingUser(false);
+        router.push('/login');
         return;
       }
 
       console.log('Fetching user profile from:', `${api}/api/me`);
       const res = await fetch(`${api}/api/me`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { 
+          'Authorization': `Bearer ${token.trim()}`,
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include',
       });
       
       console.log('Response status:', res.status, res.statusText);
+      
+      // Handle 401 immediately - token is invalid or expired
+      if (res.status === 401 || res.status === 403) {
+        try {
+          const errorData = await res.json().catch(() => ({}));
+          console.warn('Authentication failed:', res.status, errorData);
+        } catch (e) {
+          // Ignore JSON parse errors
+        }
+        localStorage.removeItem('token');
+        localStorage.removeItem('remember');
+        setLoadingUser(false);
+        router.push('/login');
+        return;
+      }
       
       if (res.ok) {
         const userData = await res.json();
@@ -268,26 +336,53 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           }
         }
       } else {
-        const errorData = await res.json().catch(() => ({}));
-        console.error('Failed to fetch user profile:', res.status, res.statusText, errorData);
+        // This should not happen for 401/403 (handled above), but handle other errors
+        let errorData = {};
+        try {
+          errorData = await res.json().catch(() => ({}));
+        } catch (e) {
+          // Ignore JSON parse errors
+        }
+        
+        // Don't log 401/403 errors here as they're already handled above
+        if (res.status !== 401 && res.status !== 403) {
+          console.warn('Failed to fetch user profile (non-auth error):', res.status, res.statusText, errorData);
+        }
         // Try to fetch user by ID from admin endpoint as fallback
         try {
-          const payload = JSON.parse(atob(token.split('.')[1] || ''));
+          const tokenParts = token.split('.');
+          if (tokenParts.length !== 3) {
+            throw new Error('Invalid token format');
+          }
+          const payload = JSON.parse(atob(tokenParts[1] || ''));
           console.log('Token payload:', payload);
-          if (payload?.sub) {
-            const userRes = await fetch(`${api}/api/admin/users/${payload.sub}`, {
-              headers: { 'Authorization': `Bearer ${token}` },
+          const userId = payload.sub || payload.userId;
+          if (userId) {
+            const userRes = await fetch(`${api}/api/admin/users/${userId}`, {
+              headers: { 
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+              },
             });
             if (userRes.ok) {
               const userData = await userRes.json();
               console.log('User data from admin endpoint:', userData);
-              setUser(userData);
-            } else {
-              // Set default super admin data
+              const name = userData.name || userData.Name || 'Super Admin';
+              const email = userData.email || userData.Email || 'superadmin@gmail.com';
+              const role = userData.role || userData.Role || 'admin';
               setUser({
-                id: Number(payload.sub),
+                id: userData.id || userData.ID || Number(userId),
+                name,
+                email,
+                role,
+                phone: userData.phone || userData.Phone,
+              });
+            } else {
+              // Set default super admin data from token
+              setUser({
+                id: Number(userId),
                 name: 'Super Admin',
-                email: 'superadmin@gmail.com',
+                email: payload.email || 'superadmin@gmail.com',
                 role: payload.role || 'admin',
               });
             }
@@ -312,8 +407,21 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         }
       }
     } catch (error) {
-      console.error('Failed to fetch user profile:', error);
-      // Set default on error
+      // Only log non-authentication errors
+      if (!(error instanceof Error && (error.message.includes('401') || error.message.includes('403')))) {
+        console.warn('Failed to fetch user profile (network/parsing error):', error);
+      }
+      
+      // Check if it's an authentication error
+      if (error instanceof Error && (error.message.includes('401') || error.message.includes('403'))) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('remember');
+        setLoadingUser(false);
+        router.push('/login');
+        return;
+      }
+      
+      // Set default on error (only if not redirecting to login)
       setUser({
         id: 0,
         name: 'Super Admin',

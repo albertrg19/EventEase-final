@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -40,7 +41,7 @@ func (h *HallHandler) List(c *gin.Context) {
 
 type hallUpsert struct {
 	Name        string  `json:"name" binding:"required"`
-	Location    string  `json:"location" binding:"required"`
+	Location    string  `json:"location"`
 	Capacity    int     `json:"capacity"`
 	Description *string `json:"description"`
 	Price       float64 `json:"price"`
@@ -62,7 +63,7 @@ func (h *HallHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "could not create"})
 		return
 	}
-	h.logActivity(c, "create", "hall", &hall.ID, fmt.Sprintf("Created hall: %s at %s", hall.Name, hall.Location))
+	h.logActivity(c, "create", "hall", &hall.ID, fmt.Sprintf("Created hall: %s", hall.Name))
 	c.JSON(http.StatusCreated, hall)
 }
 
@@ -110,10 +111,56 @@ func (h *HallHandler) Delete(c *gin.Context) {
 	}
 	hallID := hall.ID
 	hallName := hall.Name
-	if err := h.db.Delete(&models.EventHall{}, hallID).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed"})
+	
+	// Check for related bookings
+	var bookingCount int64
+	if err := h.db.Model(&models.Booking{}).Where("hall_id = ?", hallID).Count(&bookingCount).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to check bookings: %v", err)})
 		return
 	}
-	h.logActivity(c, "delete", "hall", &hallID, fmt.Sprintf("Deleted hall: %s", hallName))
+	if bookingCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": fmt.Sprintf("This hall cannot be deleted because it has %d booking(s) associated with it. Please remove or cancel all bookings first.", bookingCount),
+		})
+		return
+	}
+	
+	// Check for related events
+	var eventCount int64
+	if err := h.db.Model(&models.Event{}).Where("hall_id = ?", hallID).Count(&eventCount).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to check events: %v", err)})
+		return
+	}
+	if eventCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": fmt.Sprintf("This hall cannot be deleted because it has %d event(s) associated with it. Please remove all events first.", eventCount),
+		})
+		return
+	}
+	
+	// Attempt to delete the hall
+	if err := h.db.Delete(&models.EventHall{}, hallID).Error; err != nil {
+		// Check if it's a foreign key constraint error
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "foreign key") || strings.Contains(errStr, "constraint") || strings.Contains(errStr, "references") {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "This hall cannot be deleted because it has bookings or events associated with it. Please remove all related records first.",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("delete failed: %v", err)})
+		return
+	}
+	
+	// Log activity (non-blocking - don't fail if logging fails)
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// Silently ignore logging errors - don't fail the delete operation
+			}
+		}()
+		h.logActivity(c, "delete", "hall", &hallID, fmt.Sprintf("Deleted hall: %s", hallName))
+	}()
+	
 	c.Status(http.StatusNoContent)
 }

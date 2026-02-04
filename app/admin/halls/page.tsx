@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Building2, Plus, Edit, Trash2, Search, Loader2, Upload, Image as ImageIcon, X, Download } from 'lucide-react';
+import { Building2, Plus, Edit, Trash2, Search, Loader2, Upload, Image as ImageIcon, X, Download, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 interface Hall {
   id: number;
@@ -104,9 +104,37 @@ export default function HallManagementPage() {
   const [inlineForm, setInlineForm] = useState({ name: '', location: '', price: 0 });
   const [inlineSaving, setInlineSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [alertOpen, setAlertOpen] = useState(false);
+  const [alertMessage, setAlertMessage] = useState('');
+  const [alertType, setAlertType] = useState<'error' | 'success' | 'warning' | 'info'>('info');
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmMessage, setConfirmMessage] = useState('');
+  const [confirmTitle, setConfirmTitle] = useState('Confirm Action');
+  const [confirmCallback, setConfirmCallback] = useState<(() => void) | null>(null);
   const api = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
   const assetBase = process.env.NEXT_PUBLIC_ASSET_BASE_URL || stripApiPath(api);
   const previewObjectUrlRef = useRef<string | null>(null);
+
+  const showAlert = (message: string, type: 'error' | 'success' | 'warning' | 'info' = 'info') => {
+    setAlertMessage(message);
+    setAlertType(type);
+    setAlertOpen(true);
+  };
+
+  const showConfirm = (message: string, onConfirm: () => void, title: string = 'Confirm Action') => {
+    setConfirmMessage(message);
+    setConfirmTitle(title);
+    setConfirmCallback(() => onConfirm);
+    setConfirmOpen(true);
+  };
+
+  const handleConfirm = () => {
+    if (confirmCallback) {
+      confirmCallback();
+    }
+    setConfirmOpen(false);
+    setConfirmCallback(null);
+  };
 
   const setPreview = (url: string, isBlob = false) => {
     if (previewObjectUrlRef.current && previewObjectUrlRef.current !== url) {
@@ -260,19 +288,99 @@ export default function HallManagementPage() {
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this hall?')) return;
+    showConfirm(
+      'Are you sure you want to delete this hall? This action cannot be undone.',
+      () => performDelete(id),
+      'Delete Hall'
+    );
+  };
+
+  const performDelete = async (id: number) => {
     try {
       const token = localStorage.getItem('token');
+      if (!token) {
+        showAlert('You must be logged in to delete halls', 'warning');
+        setTimeout(() => window.location.href = '/login', 2000);
+        return;
+      }
+
+      // Validate token format before making request
+      try {
+        const tokenParts = token.trim().split('.');
+        if (tokenParts.length !== 3) {
+          throw new Error('Invalid token format');
+        }
+        const payload = JSON.parse(atob(tokenParts[1] || ''));
+        
+        // Check token expiration
+        if (payload.exp && payload.exp < Date.now() / 1000) {
+          throw new Error('Token expired');
+        }
+      } catch (tokenError) {
+        console.warn('Invalid or expired token:', tokenError);
+        localStorage.removeItem('token');
+        localStorage.removeItem('remember');
+        showAlert('Your session has expired. Please log in again.', 'warning');
+        setTimeout(() => window.location.href = '/login', 2000);
+        return;
+      }
+      
       const res = await fetch(`${api}/api/admin/halls/${id}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { 
+          'Authorization': `Bearer ${token.trim()}`,
+          'Content-Type': 'application/json'
+        },
       });
-      if (res.ok) {
+      
+      // Handle 401/403 - authentication failed
+      if (res.status === 401 || res.status === 403) {
+        const errorData = await res.json().catch(() => ({ error: 'Unauthorized' }));
+        console.warn('Authentication failed:', res.status, errorData);
+        localStorage.removeItem('token');
+        localStorage.removeItem('remember');
+        showAlert('Your session has expired. Please log in again.', 'warning');
+        setTimeout(() => window.location.href = '/login', 2000);
+        return;
+      }
+      
+      if (res.ok || res.status === 204) {
         setHalls((prev) => prev.filter((h) => h.id !== id));
         setSelectedIds((prev) => prev.filter((i) => i !== id));
+        showAlert('Hall deleted successfully!', 'success');
+      } else {
+        let errorData = { error: 'Unknown error' };
+        try {
+          const text = await res.text();
+          if (text) {
+            errorData = JSON.parse(text);
+          }
+        } catch (e) {
+          // If JSON parsing fails, use status text
+          errorData = { error: res.statusText || 'Unknown error' };
+        }
+        
+        console.error('Delete failed:', res.status, errorData);
+        const errorMessage = errorData.error || res.statusText || 'Unknown error';
+        
+        // Provide more helpful messages based on status code
+        if (res.status === 409) {
+          showAlert(errorMessage, 'error');
+        } else if (res.status === 500) {
+          showAlert(`Server error: ${errorMessage}\n\nPlease try again or contact support if the problem persists.`, 'error');
+        } else {
+          showAlert(`Failed to delete hall: ${errorMessage}`, 'error');
+        }
       }
     } catch (error) {
       console.error('Failed to delete hall:', error);
+      if (error instanceof Error && (error.message.includes('401') || error.message.includes('403'))) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('remember');
+        window.location.href = '/login';
+        return;
+      }
+      showAlert('An error occurred while deleting the hall. Please try again.', 'error');
     }
   };
 
@@ -292,7 +400,14 @@ export default function HallManagementPage() {
 
   const handleBulkDelete = async () => {
     if (!hasSelection) return;
-    if (!confirm(`Delete ${selectedIds.length} halls? This cannot be undone.`)) return;
+    showConfirm(
+      `Are you sure you want to delete ${selectedIds.length} hall(s)? This action cannot be undone.`,
+      () => performBulkDelete(),
+      'Delete Multiple Halls'
+    );
+  };
+
+  const performBulkDelete = async () => {
     setBulkDeleting(true);
     try {
       const token = localStorage.getItem('token');
@@ -306,7 +421,7 @@ export default function HallManagementPage() {
       setSelectedIds([]);
     } catch (error) {
       console.error('Bulk delete failed:', error);
-      alert('Some deletions failed. Please try again.');
+      showAlert('Some deletions failed. Please try again.', 'error');
     } finally {
       setBulkDeleting(false);
     }
@@ -314,7 +429,7 @@ export default function HallManagementPage() {
 
   const startInlineEdit = (hall: Hall) => {
     setInlineEditId(hall.id);
-    setInlineForm({ name: hall.name || '', location: hall.location || '', price: hall.price || 0 });
+    setInlineForm({ name: hall.name || '', location: '', price: hall.price || 0 });
   };
 
   const cancelInlineEdit = () => {
@@ -324,8 +439,8 @@ export default function HallManagementPage() {
 
   const saveInlineEdit = async () => {
     if (!inlineEditId) return;
-    if (!inlineForm.name.trim() || !inlineForm.location.trim()) {
-      alert('Name and location are required.');
+    if (!inlineForm.name.trim()) {
+      showAlert('Name is required.', 'warning');
       return;
     }
     const hall = halls.find((h) => h.id === inlineEditId);
@@ -341,7 +456,7 @@ export default function HallManagementPage() {
         },
         body: JSON.stringify({
           name: inlineForm.name.trim(),
-          location: inlineForm.location.trim(),
+          location: '',
           capacity: hall.capacity,
           max_capacity: hall.max_capacity,
           price: inlineForm.price,
@@ -353,26 +468,27 @@ export default function HallManagementPage() {
         setHalls((prev) =>
           prev.map((h) =>
             h.id === inlineEditId
-              ? { ...h, name: inlineForm.name, location: inlineForm.location, price: inlineForm.price }
+              ? { ...h, name: inlineForm.name, price: inlineForm.price }
               : h
           )
         );
         cancelInlineEdit();
+        showAlert('Hall updated successfully!', 'success');
       } else {
         const data = await res.json().catch(() => ({}));
-        alert(data.error || 'Failed to save changes');
+        showAlert(data.error || 'Failed to save changes', 'error');
       }
     } catch (error) {
       console.error('Inline edit failed:', error);
-      alert('Unable to update hall.');
+      showAlert('Unable to update hall.', 'error');
     } finally {
       setInlineSaving(false);
     }
   };
 
   const exportCSV = () => {
-    const headers = ['ID', 'Name', 'Location', 'Capacity', 'Max Capacity', 'Price'];
-    const rows = filteredHalls.map((h) => [h.id, h.name, h.location, h.capacity, h.max_capacity, h.price]);
+    const headers = ['ID', 'Name', 'Capacity', 'Max Capacity', 'Price'];
+    const rows = filteredHalls.map((h) => [h.id, h.name, h.capacity, h.max_capacity, h.price]);
     const csvContent = [headers, ...rows].map((row) => row.join(',')).join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
@@ -383,19 +499,18 @@ export default function HallManagementPage() {
 
   const filteredHalls = halls.filter((hall) => {
     const name = (hall.name || '').toLowerCase();
-    const location = (hall.location || '').toLowerCase();
     const query = searchQuery.toLowerCase();
-    return name.includes(query) || location.includes(query);
+    return name.includes(query);
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name.trim() || !formData.location.trim()) {
-      alert('Please fill in all required fields');
+    if (!formData.name.trim()) {
+      showAlert('Please fill in all required fields', 'warning');
       return;
     }
     if (formData.capacity < 0 || formData.max_capacity < 0 || formData.price < 0) {
-      alert('Capacity and price must be non-negative numbers');
+      showAlert('Capacity and price must be non-negative numbers', 'warning');
       return;
     }
     try {
@@ -414,7 +529,7 @@ export default function HallManagementPage() {
         },
         body: JSON.stringify({
           name: formData.name.trim(),
-          location: formData.location.trim(),
+          location: '',
           capacity: Number(formData.capacity) || 0,
           max_capacity: Number(formData.max_capacity) || 0,
           price: Number(formData.price) || 0,
@@ -456,13 +571,14 @@ export default function HallManagementPage() {
         setFormData({ name: '', location: '', capacity: 0, max_capacity: 0, price: 0, description: '', photo: '' });
         setImageError(null);
         clearPreview();
+        showAlert(editingHall ? 'Hall updated successfully!' : 'Hall created successfully!', 'success');
       } else {
         const errorData = await res.json().catch(() => ({ error: 'Failed to save hall' }));
-        alert(errorData.error || `Failed to save hall: ${res.status} ${res.statusText}`);
+        showAlert(errorData.error || `Failed to save hall: ${res.status} ${res.statusText}`, 'error');
       }
     } catch (error: any) {
       console.error('Failed to save hall:', error);
-      alert(error.message || 'An error occurred while saving the hall. Please try again.');
+      showAlert(error.message || 'An error occurred while saving the hall. Please try again.', 'error');
     } finally {
       setSubmitting(false);
     }
@@ -473,7 +589,7 @@ export default function HallManagementPage() {
     const previewUrl = hall.photo ? resolveImageUrl(hall.photo, assetBase) || '' : '';
     setFormData({
       name: hall.name || '',
-      location: hall.location || '',
+      location: '',
       capacity: hall.capacity ?? 0,
       max_capacity: hall.max_capacity ?? 0,
       price: hall.price ?? 0,
@@ -588,7 +704,6 @@ export default function HallManagementPage() {
                     </th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Image</th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Name</th>
-                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Location</th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Capacity</th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Price</th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Actions</th>
@@ -617,17 +732,6 @@ export default function HallManagementPage() {
                           />
                         ) : (
                           hall.name || '-'
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-gray-600">
-                        {inlineEditId === hall.id ? (
-                          <Input
-                            value={inlineForm.location}
-                            onChange={(e) => setInlineForm((prev) => ({ ...prev, location: e.target.value }))}
-                            className="h-9"
-                          />
-                        ) : (
-                          hall.location || '-'
                         )}
                       </td>
                       <td className="py-3 px-4 text-gray-600">
@@ -686,7 +790,7 @@ export default function HallManagementPage() {
       </Card>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-md sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-md sm:max-w-lg max-h-[90vh] overflow-y-hidden">
           <DialogHeader className="pb-4 border-b border-gray-200">
             <DialogTitle className="text-2xl font-bold text-gray-900">
               {editingHall ? 'Edit Hall' : 'Add New Hall'}
@@ -705,18 +809,6 @@ export default function HallManagementPage() {
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 required
                 placeholder="Enter hall name"
-                className="h-11 border-gray-300 focus:border-blue-950 focus:ring-2 focus:ring-blue-950/20"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-700 block">
-                Location <span className="text-red-500">*</span>
-              </label>
-              <Input
-                value={formData.location}
-                onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                required
-                placeholder="Enter hall location"
                 className="h-11 border-gray-300 focus:border-blue-950 focus:ring-2 focus:ring-blue-950/20"
               />
             </div>
@@ -886,6 +978,93 @@ export default function HallManagementPage() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modern Alert Modal */}
+      <Dialog open={alertOpen} onOpenChange={setAlertOpen}>
+        <DialogContent className="max-w-md sm:max-w-lg" showCloseButton={true}>
+          <div className="flex flex-col items-center text-center space-y-4 py-4">
+            <div className={`rounded-full p-3 ${
+              alertType === 'error' ? 'bg-red-100' :
+              alertType === 'success' ? 'bg-green-100' :
+              alertType === 'warning' ? 'bg-yellow-100' :
+              'bg-blue-100'
+            }`}>
+              {alertType === 'error' ? (
+                <AlertCircle className="h-8 w-8 text-red-600" />
+              ) : alertType === 'success' ? (
+                <CheckCircle2 className="h-8 w-8 text-green-600" />
+              ) : alertType === 'warning' ? (
+                <AlertCircle className="h-8 w-8 text-yellow-600" />
+              ) : (
+                <AlertCircle className="h-8 w-8 text-blue-600" />
+              )}
+            </div>
+            <div className="space-y-2">
+              <DialogTitle className={`text-xl font-semibold ${
+                alertType === 'error' ? 'text-red-900' :
+                alertType === 'success' ? 'text-green-900' :
+                alertType === 'warning' ? 'text-yellow-900' :
+                'text-blue-900'
+              }`}>
+                {alertType === 'error' ? 'Error' :
+                 alertType === 'success' ? 'Success' :
+                 alertType === 'warning' ? 'Warning' :
+                 'Information'}
+              </DialogTitle>
+              <DialogDescription className="text-gray-700 text-base whitespace-pre-line">
+                {alertMessage}
+              </DialogDescription>
+            </div>
+            <div className="pt-2">
+              <Button
+                onClick={() => setAlertOpen(false)}
+                className={`${
+                  alertType === 'error' ? 'bg-red-600 hover:bg-red-700' :
+                  alertType === 'success' ? 'bg-green-600 hover:bg-green-700' :
+                  alertType === 'warning' ? 'bg-yellow-600 hover:bg-yellow-700' :
+                  'bg-blue-600 hover:bg-blue-700'
+                } text-white px-8`}
+              >
+                OK
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modern Confirmation Modal */}
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent className="max-w-md sm:max-w-lg" showCloseButton={true}>
+          <div className="flex flex-col items-center text-center space-y-4 py-4">
+            <div className="rounded-full p-3 bg-yellow-100">
+              <AlertCircle className="h-8 w-8 text-yellow-600" />
+            </div>
+            <div className="space-y-2">
+              <DialogTitle className="text-xl font-semibold text-gray-900">
+                {confirmTitle}
+              </DialogTitle>
+              <DialogDescription className="text-gray-700 text-base whitespace-pre-line">
+                {confirmMessage}
+              </DialogDescription>
+            </div>
+            <div className="flex gap-3 pt-2 w-full sm:w-auto">
+              <Button
+                variant="outline"
+                onClick={() => setConfirmOpen(false)}
+                className="flex-1 sm:flex-initial px-6 border-gray-300 hover:bg-gray-50"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleConfirm}
+                className="flex-1 sm:flex-initial px-6 bg-red-600 hover:bg-red-700 text-white"
+              >
+                Confirm
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

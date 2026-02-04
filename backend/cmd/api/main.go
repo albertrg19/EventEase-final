@@ -26,6 +26,7 @@ func main() {
 	// Auto migrate
 	if err := db.AutoMigrate(
 		&models.User{},
+		&models.UserLoginHistory{},
 		&models.EventCategory{},
 		&models.EventHall{},
 		&models.Event{},
@@ -72,24 +73,26 @@ func main() {
 
 	// Health endpoints
 	healthHandler := handlers.NewHealthHandler(db)
-	// Health endpoints
-	healthHandler := handlers.NewHealthHandler(db)
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
-	r.GET("/api/health/status", healthHandler.Status)
 	r.GET("/api/health/status", healthHandler.Status)
 
 	// API routes
 	api := r.Group("/api")
 	{
-		// Auth
+	// Auth
 		authHandler := handlers.NewAuthHandler(db)
 		auth := api.Group("/auth")
 		{
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/login", authHandler.Login)
+			auth.POST("/forgot-password", authHandler.ForgotPassword)
+			auth.POST("/reset-password", authHandler.ResetPassword)
+			auth.POST("/verify-email", authHandler.VerifyEmail)
+			auth.POST("/resend-verification", authHandler.ResendVerification)
 		}
+
 
 		// Public reads
 		catHandler := handlers.NewCategoryHandler(db)
@@ -147,6 +150,10 @@ func main() {
 			admin.POST("/invoices/create-missing", invoiceHandler.CreateMissingInvoices)
 			admin.GET("/invoices/:id", invoiceHandler.Get)
 			admin.PUT("/invoices/:id", invoiceHandler.Update)
+			admin.DELETE("/invoices/:id", invoiceHandler.Delete)
+			admin.GET("/invoices/:id/pdf", invoiceHandler.GeneratePDF)
+			admin.POST("/invoices/:id/send-email", invoiceHandler.SendEmail)
+			admin.POST("/invoices/:id/send-reminder", invoiceHandler.SendReminder)
 
 			// Uploads
 			admin.POST("/uploads/images", uploadHandler.Image)
@@ -212,6 +219,9 @@ func main() {
 			// Chat templates (admin only for creation, but all can view)
 			secure.GET("/chat/templates", chatTemplateHandler.ListTemplates)
 			secure.GET("/chat/templates/:id", chatTemplateHandler.GetTemplate)
+
+			// Customer invoice creation for their own bookings
+			secure.POST("/invoices/create-my-missing", invoiceHandler.CreateMyMissingInvoices)
 		}
 
 		// WebSocket endpoint (handles auth manually via query param)

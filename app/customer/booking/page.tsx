@@ -60,7 +60,14 @@ export default function NewBookingPage() {
     hall_id: 0,
     start_time: '',
     end_time: '',
+    start_hour: '09',
+    start_minute: '00',
+    start_period: 'AM',
+    end_hour: '05',
+    end_minute: '00',
+    end_period: 'PM',
   });
+  const [currentHallIndex, setCurrentHallIndex] = useState(0);
   const api = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
   useEffect(() => {
@@ -73,11 +80,16 @@ export default function NewBookingPage() {
     }
   }, [currentDate]);
 
+  useEffect(() => {
+    // Reset carousel index when available halls change
+    setCurrentHallIndex(0);
+  }, [selectedDate, halls]);
+
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Math.random().toString(36).substr(2, 9);
-    setToasts((prev) => [...prev, { id, message, type }]);
+    setToasts((prev: Toast[]) => [...prev, { id, message, type }]);
     setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
+      setToasts((prev: Toast[]) => prev.filter((t: Toast) => t.id !== id));
     }, 5000);
   };
 
@@ -113,7 +125,18 @@ export default function NewBookingPage() {
       if (res.ok) {
         const data = await res.json();
         console.log('✅ Halls loaded from database:', data);
-        setHalls(data || []);
+        // Normalize hall data - keep Photo as-is, URL resolution happens at render time
+        const normalizedHalls = (data || []).map((hall: any) => ({
+          ID: hall.id ?? hall.ID ?? 0,
+          Name: hall.name ?? hall.Name ?? '',
+          Photo: hall.photo ?? hall.Photo ?? undefined, // Keep raw path, resolve in img src
+          Capacity: hall.capacity ?? hall.Capacity ?? 0,
+          MaxCapacity: hall.max_capacity ?? hall.maxCapacity ?? hall.MaxCapacity ?? 0,
+          Description: hall.description ?? hall.Description ?? undefined,
+          Location: hall.location ?? hall.Location ?? '',
+          Price: hall.price ?? hall.Price ?? 0,
+        }));
+        setHalls(normalizedHalls);
       } else {
         showToast('Failed to load halls', 'error');
         console.error('❌ Failed to fetch halls:', res.status);
@@ -143,7 +166,7 @@ export default function NewBookingPage() {
   };
 
   const getBookingsForDate = (date: Date): Booking[] => {
-    return bookings.filter((booking) => isSameDay(new Date(booking.event_date), date));
+    return bookings.filter((booking: Booking) => isSameDay(new Date(booking.event_date), date));
   };
 
   const isHallAvailable = (hallId: number, date: Date): boolean => {
@@ -156,7 +179,29 @@ export default function NewBookingPage() {
 
   const getAvailableHalls = (): Hall[] => {
     if (!selectedDate) return halls;
-    return halls.filter((hall) => isHallAvailable(hall.ID, selectedDate));
+    return halls.filter((hall: Hall) => isHallAvailable(hall.ID, selectedDate));
+  };
+
+  const nextHall = () => {
+    const availableHalls = getAvailableHalls();
+    setCurrentHallIndex((prev: number) => (prev + 1) % availableHalls.length);
+  };
+
+  const prevHall = () => {
+    const availableHalls = getAvailableHalls();
+    setCurrentHallIndex((prev: number) => (prev - 1 + availableHalls.length) % availableHalls.length);
+  };
+
+  const to24Hour = (hour: string, period: string): number => {
+    let h = parseInt(hour, 10);
+    if (period === 'PM' && h !== 12) h += 12;
+    if (period === 'AM' && h === 12) h = 0;
+    return h;
+  };
+
+  const formatTimeTo24Hour = (hour: string, minute: string, period: string): string => {
+    const h24 = to24Hour(hour, period);
+    return `${String(h24).padStart(2, '0')}:${minute}`;
   };
 
   const handleDateClick = (date: Date) => {
@@ -183,14 +228,22 @@ export default function NewBookingPage() {
     if (!formData.hall_id || formData.hall_id === 0) {
       errors.hall_id = 'Please select a hall';
     }
-    if (!formData.start_time) {
+
+    // Validate time - check if all time fields are filled
+    if (!formData.start_hour || !formData.start_minute || !formData.start_period) {
       errors.start_time = 'Start time is required';
     }
-    if (!formData.end_time) {
+    if (!formData.end_hour || !formData.end_minute || !formData.end_period) {
       errors.end_time = 'End time is required';
     }
-    if (formData.start_time && formData.end_time && formData.start_time >= formData.end_time) {
-      errors.end_time = 'End time must be after start time';
+
+    // Validate end time is after start time
+    if (formData.start_hour && formData.end_hour) {
+      const startTime24 = formatTimeTo24Hour(formData.start_hour, formData.start_minute, formData.start_period);
+      const endTime24 = formatTimeTo24Hour(formData.end_hour, formData.end_minute, formData.end_period);
+      if (startTime24 >= endTime24) {
+        errors.end_time = 'End time must be after start time';
+      }
     }
 
     setFormErrors(errors);
@@ -227,6 +280,10 @@ export default function NewBookingPage() {
         return;
       }
 
+      // Convert 12-hour format to 24-hour format
+      const startTime24 = formatTimeTo24Hour(formData.start_hour, formData.start_minute, formData.start_period);
+      const endTime24 = formatTimeTo24Hour(formData.end_hour, formData.end_minute, formData.end_period);
+
       const res = await fetch(`${api}/api/bookings`, {
         method: 'POST',
         headers: {
@@ -240,8 +297,8 @@ export default function NewBookingPage() {
           event_category_id: formData.event_category_id,
           hall_id: formData.hall_id,
           event_date: format(selectedDate, 'yyyy-MM-dd'),
-          start_time: formData.start_time,
-          end_time: formData.end_time,
+          start_time: startTime24,
+          end_time: endTime24,
         }),
       });
 
@@ -250,9 +307,22 @@ export default function NewBookingPage() {
       if (res.ok) {
         showToast('Booking created successfully!', 'success');
         setDialogOpen(false);
-        setFormData({ event_name: '', event_category_id: 0, hall_id: 0, start_time: '', end_time: '' });
+        setFormData({
+          event_name: '',
+          event_category_id: 0,
+          hall_id: 0,
+          start_time: '',
+          end_time: '',
+          start_hour: '09',
+          start_minute: '00',
+          start_period: 'AM',
+          end_hour: '05',
+          end_minute: '00',
+          end_period: 'PM',
+        });
         setSelectedDate(null);
         setFormErrors({});
+        setCurrentHallIndex(0);
         await fetchBookings();
         setTimeout(() => {
           router.push('/customer/bookings');
@@ -325,7 +395,7 @@ export default function NewBookingPage() {
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 relative">
       {/* Toast Notifications */}
       <div className="fixed top-4 right-4 z-50 space-y-2">
-        {toasts.map((toast) => (
+        {toasts.map((toast: Toast) => (
           <div
             key={toast.id}
             className={`flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl min-w-[300px] max-w-md animate-in slide-in-from-right ${toast.type === 'success'
@@ -344,7 +414,7 @@ export default function NewBookingPage() {
             )}
             <p className="flex-1 font-medium text-sm">{toast.message}</p>
             <button
-              onClick={() => setToasts((prev) => prev.filter((t) => t.id !== toast.id))}
+              onClick={() => setToasts((prev: Toast[]) => prev.filter((t: Toast) => t.id !== toast.id))}
               className="text-gray-400 hover:text-gray-600"
             >
               <X className="h-4 w-4" />
@@ -438,7 +508,7 @@ export default function NewBookingPage() {
               ))}
 
               {/* Calendar Days */}
-              {monthDays.map((date) => {
+              {monthDays.map((date: Date) => {
                 const dateBookings = getBookingsForDate(date);
                 const past = isPast(date);
                 const today = isToday(date);
@@ -484,105 +554,210 @@ export default function NewBookingPage() {
       </Card>
 
       {/* New Event Booking Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={(open) => {
+      <Dialog open={dialogOpen} onOpenChange={(open: boolean) => {
         setDialogOpen(open);
         if (!open) {
           setFormErrors({});
-          setFormData({ event_name: '', event_category_id: 0, hall_id: 0, start_time: '', end_time: '' });
+          setFormData({
+            event_name: '',
+            event_category_id: 0,
+            hall_id: 0,
+            start_time: '',
+            end_time: '',
+            start_hour: '09',
+            start_minute: '00',
+            start_period: 'AM',
+            end_hour: '05',
+            end_minute: '00',
+            end_period: 'PM',
+          });
+          setCurrentHallIndex(0);
         }
       }}>
-        <DialogContent className="max-w-3xl shadow-2xl border-0 rounded-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
-          <DialogHeader className="bg-gradient-to-r from-blue-600 via-blue-700 to-blue-600 text-white p-6 rounded-t-2xl -mt-6 -mx-6 mb-6 relative overflow-hidden">
+        <DialogContent className="max-w-3xl shadow-2xl border-0 rounded-2xl overflow-hidden max-h-[90vh]">
+          <DialogHeader className="bg-gradient-to-r from-blue-600 via-blue-700 to-blue-600 text-white p-3 rounded-t-2xl -mt-6 -mx-6 mb-3 relative overflow-hidden">
             <div className="absolute inset-0 bg-gradient-to-r from-yellow-400/10 to-transparent"></div>
             <div className="relative flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center backdrop-blur-sm">
-                  <Calendar className="h-6 w-6" />
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 bg-white/20 rounded-lg flex items-center justify-center backdrop-blur-sm">
+                  <Calendar className="h-4 w-4" />
                 </div>
-                <DialogTitle className="text-2xl font-bold">New Event Booking</DialogTitle>
+                <DialogTitle className="text-lg font-bold">New Event Booking</DialogTitle>
               </div>
             </div>
           </DialogHeader>
 
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form onSubmit={handleSubmit} className="space-y-3 p-1">
             {/* Two Column Layout */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {/* Left Column - Event Details */}
-              <div className="space-y-4">
+              <div className="space-y-2.5">
                 {/* Date & Time Section */}
                 {selectedDate && (
-                  <div className="space-y-3">
-                    <label className="text-sm font-bold text-gray-700 flex items-center gap-2">
-                      <Calendar className="h-4 w-4 text-blue-600" />
+                  <div className="space-y-2.5">
+                    <label className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                      <Calendar className="h-3.5 w-3.5 text-blue-600" />
                       Date & Time
                     </label>
 
                     {/* Date Display */}
-                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-lg p-3">
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-lg p-2">
                       <div className="flex items-center gap-2">
-                        <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                          <Calendar className="h-5 w-5 text-white" />
+                        <div className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <Calendar className="h-3.5 w-3.5 text-white" />
                         </div>
                         <div>
-                          <p className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide">Selected Date</p>
-                          <p className="text-sm font-bold text-blue-900">{format(selectedDate, 'EEEE, MMMM d, yyyy')}</p>
+                          <p className="text-[8px] font-semibold text-blue-700 uppercase tracking-wide">Selected Date</p>
+                          <p className="text-[11px] font-bold text-blue-900 leading-tight">{format(selectedDate, 'EEEE, MMMM d, yyyy')}</p>
                         </div>
                       </div>
                     </div>
 
                     {/* Time Selection */}
                     <div className="bg-white border-2 border-gray-300 rounded-lg p-3">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Clock className="h-4 w-4 text-gray-600" />
-                        <p className="text-xs font-semibold text-gray-700">Event Duration</p>
+                      <div className="flex items-center gap-1.5 mb-3">
+                        <Clock className="h-4 w-4 text-blue-600" />
+                        <p className="text-sm font-bold text-gray-800">Event Time</p>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-2 gap-4">
                         {/* Start Time */}
                         <div>
-                          <label className="text-xs font-medium text-gray-700 block mb-1.5">Start Time</label>
-                          <div className="relative">
-                            <Input
-                              type="time"
-                              value={formData.start_time}
-                              onChange={(e) => {
-                                setFormData({ ...formData, start_time: e.target.value });
+                          <label className="text-xs font-medium text-gray-700 block mb-2">Start Time</label>
+                          <div className="flex items-center gap-1">
+                            {/* Hour Dropdown */}
+                            <div className="relative">
+                              <select
+                                value={formData.start_hour}
+                                onChange={(e) => {
+                                  setFormData({ ...formData, start_hour: e.target.value });
+                                  if (formErrors.start_time) {
+                                    setFormErrors({ ...formErrors, start_time: '' });
+                                  }
+                                }}
+                                className="h-10 w-16 border-2 border-gray-300 rounded-lg px-2 pr-6 text-sm font-medium text-center focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 appearance-none bg-white cursor-pointer"
+                              >
+                                {Array.from({ length: 12 }, (_, i) => {
+                                  const hour = String(i + 1).padStart(2, '0');
+                                  return (
+                                    <option key={hour} value={hour}>
+                                      {hour}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                              <ChevronRight className="absolute right-1.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none rotate-90" />
+                            </div>
+                            <span className="text-gray-700 font-bold">:</span>
+                            {/* Minute Dropdown */}
+                            <div className="relative">
+                              <select
+                                value={formData.start_minute}
+                                onChange={(e) => {
+                                  setFormData({ ...formData, start_minute: e.target.value });
+                                  if (formErrors.start_time) {
+                                    setFormErrors({ ...formErrors, start_time: '' });
+                                  }
+                                }}
+                                className="h-10 w-16 border-2 border-gray-300 rounded-lg px-2 pr-6 text-sm font-medium text-center focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 appearance-none bg-white cursor-pointer"
+                              >
+                                {['00', '15', '30', '45'].map((minute) => (
+                                  <option key={minute} value={minute}>
+                                    {minute}
+                                  </option>
+                                ))}
+                              </select>
+                              <ChevronRight className="absolute right-1.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none rotate-90" />
+                            </div>
+                            {/* AM/PM Button */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newPeriod = formData.start_period === 'AM' ? 'PM' : 'AM';
+                                setFormData({ ...formData, start_period: newPeriod });
                                 if (formErrors.start_time) {
                                   setFormErrors({ ...formErrors, start_time: '' });
                                 }
                               }}
-                              required
-                              className={`h-10 text-sm border-2 ${formErrors.start_time ? 'border-red-500' : 'border-gray-300'
-                                } focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 rounded-lg transition-all font-medium`}
-                            />
+                              className="h-10 w-14 bg-blue-950 hover:bg-blue-900 text-white font-bold rounded-lg flex items-center justify-center gap-1 transition-all shadow-sm"
+                            >
+                              {formData.start_period}
+                              <ChevronRight className="h-3 w-3 rotate-90" />
+                            </button>
                           </div>
                         </div>
 
                         {/* End Time */}
                         <div>
-                          <label className="text-xs font-medium text-gray-700 block mb-1.5">End Time</label>
-                          <div className="relative">
-                            <Input
-                              type="time"
-                              value={formData.end_time}
-                              onChange={(e) => {
-                                setFormData({ ...formData, end_time: e.target.value });
+                          <label className="text-xs font-medium text-gray-700 block mb-2">End Time</label>
+                          <div className="flex items-center gap-1">
+                            {/* Hour Dropdown */}
+                            <div className="relative">
+                              <select
+                                value={formData.end_hour}
+                                onChange={(e) => {
+                                  setFormData({ ...formData, end_hour: e.target.value });
+                                  if (formErrors.end_time) {
+                                    setFormErrors({ ...formErrors, end_time: '' });
+                                  }
+                                }}
+                                className="h-10 w-16 border-2 border-gray-300 rounded-lg px-2 pr-6 text-sm font-medium text-center focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 appearance-none bg-white cursor-pointer"
+                              >
+                                {Array.from({ length: 12 }, (_, i) => {
+                                  const hour = String(i + 1).padStart(2, '0');
+                                  return (
+                                    <option key={hour} value={hour}>
+                                      {hour}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                              <ChevronRight className="absolute right-1.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none rotate-90" />
+                            </div>
+                            <span className="text-gray-700 font-bold">:</span>
+                            {/* Minute Dropdown */}
+                            <div className="relative">
+                              <select
+                                value={formData.end_minute}
+                                onChange={(e) => {
+                                  setFormData({ ...formData, end_minute: e.target.value });
+                                  if (formErrors.end_time) {
+                                    setFormErrors({ ...formErrors, end_time: '' });
+                                  }
+                                }}
+                                className="h-10 w-16 border-2 border-gray-300 rounded-lg px-2 pr-6 text-sm font-medium text-center focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 appearance-none bg-white cursor-pointer"
+                              >
+                                {['00', '15', '30', '45'].map((minute) => (
+                                  <option key={minute} value={minute}>
+                                    {minute}
+                                  </option>
+                                ))}
+                              </select>
+                              <ChevronRight className="absolute right-1.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none rotate-90" />
+                            </div>
+                            {/* AM/PM Button */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newPeriod = formData.end_period === 'AM' ? 'PM' : 'AM';
+                                setFormData({ ...formData, end_period: newPeriod });
                                 if (formErrors.end_time) {
                                   setFormErrors({ ...formErrors, end_time: '' });
                                 }
                               }}
-                              required
-                              className={`h-10 text-sm border-2 ${formErrors.end_time ? 'border-red-500' : 'border-gray-300'
-                                } focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 rounded-lg transition-all font-medium`}
-                            />
+                              className="h-10 w-14 bg-blue-950 hover:bg-blue-900 text-white font-bold rounded-lg flex items-center justify-center gap-1 transition-all shadow-sm"
+                            >
+                              {formData.end_period}
+                              <ChevronRight className="h-3 w-3 rotate-90" />
+                            </button>
                           </div>
                         </div>
                       </div>
 
                       {(formErrors.start_time || formErrors.end_time) && (
-                        <div className="mt-2 bg-red-50 border border-red-200 rounded-lg p-2">
-                          <p className="text-xs text-red-600 flex items-center gap-1">
-                            <AlertCircle className="h-3 w-3" />
+                        <div className="mt-1.5 bg-red-50 border border-red-200 rounded-lg p-1.5">
+                          <p className="text-[10px] text-red-600 flex items-center gap-1">
+                            <AlertCircle className="h-2.5 w-2.5" />
                             {formErrors.start_time || formErrors.end_time}
                           </p>
                         </div>
@@ -592,13 +767,13 @@ export default function NewBookingPage() {
                 )}
 
                 {/* Event Name */}
-                <div className="space-y-2">
-                  <label className="text-sm font-bold text-gray-700">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-gray-700">
                     Event Name
                   </label>
                   <Input
                     value={formData.event_name}
-                    onChange={(e) => {
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                       setFormData({ ...formData, event_name: e.target.value });
                       if (formErrors.event_name) {
                         setFormErrors({ ...formErrors, event_name: '' });
@@ -606,20 +781,20 @@ export default function NewBookingPage() {
                     }}
                     required
                     placeholder="Event Name"
-                    className={`h-10 border-2 ${formErrors.event_name ? 'border-red-500' : 'border-gray-300'
+                    className={`h-9 text-sm border-2 ${formErrors.event_name ? 'border-red-500' : 'border-gray-300'
                       } focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 rounded-lg transition-all`}
                   />
                   {formErrors.event_name && (
-                    <p className="text-xs text-red-600 flex items-center gap-1">
-                      <AlertCircle className="h-3 w-3" />
+                    <p className="text-[10px] text-red-600 flex items-center gap-1">
+                      <AlertCircle className="h-2.5 w-2.5" />
                       {formErrors.event_name}
                     </p>
                   )}
                 </div>
 
                 {/* Event Category */}
-                <div className="space-y-2">
-                  <label className="text-sm font-bold text-gray-700">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-gray-700">
                     Event Category
                   </label>
                   <select
@@ -631,19 +806,19 @@ export default function NewBookingPage() {
                       }
                     }}
                     required
-                    className={`w-full h-10 rounded-lg border-2 ${formErrors.event_category_id ? 'border-red-500' : 'border-gray-300'
+                    className={`w-full h-9 rounded-lg border-2 ${formErrors.event_category_id ? 'border-red-500' : 'border-gray-300'
                       } bg-white px-3 py-2 text-sm shadow-sm transition-all focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20`}
                   >
                     <option value={0}>Select a category</option>
-                    {categories.map((cat) => (
+                    {categories.map((cat: Category) => (
                       <option key={cat.ID} value={cat.ID}>
                         {cat.Name}
                       </option>
                     ))}
                   </select>
                   {formErrors.event_category_id && (
-                    <p className="text-xs text-red-600 flex items-center gap-1">
-                      <AlertCircle className="h-3 w-3" />
+                    <p className="text-[10px] text-red-600 flex items-center gap-1">
+                      <AlertCircle className="h-2.5 w-2.5" />
                       {formErrors.event_category_id}
                     </p>
                   )}
@@ -651,8 +826,9 @@ export default function NewBookingPage() {
               </div>
 
               {/* Right Column - Event Hall */}
-              <div className="space-y-2">
-                <label className="text-sm font-bold text-gray-700">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                  <Building2 className="h-3.5 w-3.5 text-blue-600" />
                   Event Hall
                 </label>
                 {getAvailableHalls().length === 0 ? (
@@ -672,54 +848,117 @@ export default function NewBookingPage() {
                   </div>
                 ) : (
                   <>
-                    <div className={`grid grid-cols-2 gap-2 ${formErrors.hall_id ? 'ring-2 ring-red-500 rounded-lg p-1' : ''}`}>
-                      {getAvailableHalls().map((hall) => (
-                        <button
-                          key={hall.ID}
-                          type="button"
-                          onClick={() => {
-                            setFormData({ ...formData, hall_id: hall.ID });
-                            if (formErrors.hall_id) {
-                              setFormErrors({ ...formErrors, hall_id: '' });
-                            }
-                          }}
-                          className={`relative overflow-hidden rounded-lg border-2 transition-all duration-200 hover:shadow-sm ${formData.hall_id === hall.ID
-                            ? 'border-blue-500 ring-2 ring-blue-300/50 shadow-md'
-                            : 'border-gray-200 hover:border-gray-300'
-                            }`}
-                        >
-                          <div className="aspect-square relative bg-gradient-to-br from-gray-100 to-gray-200">
-                            {hall.Photo ? (
-                              <img
-                                src={hall.Photo}
-                                alt={hall.Name}
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <div className="w-full h-full flex flex-col items-center justify-center">
-                                <Building2 className="h-8 w-8 text-gray-400" />
-                              </div>
-                            )}
-                            {formData.hall_id === hall.ID && (
-                              <div className="absolute top-1.5 right-1.5">
-                                <div className="w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center shadow-lg">
-                                  <Check className="h-3 w-3 text-white" />
+                    <div className={`relative ${formErrors.hall_id ? 'ring-2 ring-red-500 rounded-lg p-1' : ''}`}>
+                      {/* Carousel Container */}
+                      <div className="relative overflow-hidden rounded-lg bg-gray-50">
+                        {/* Previous Button */}
+                        {getAvailableHalls().length > 1 && (
+                          <button
+                            type="button"
+                            onClick={prevHall}
+                            className="absolute left-1.5 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white/95 hover:bg-white rounded-full shadow-md flex items-center justify-center transition-all hover:scale-110 border border-gray-200"
+                            aria-label="Previous hall"
+                          >
+                            <ChevronLeft className="h-4 w-4 text-gray-700" />
+                          </button>
+                        )}
+
+                        {/* Hall Cards Container */}
+                        <div className="flex transition-transform duration-300 ease-in-out" style={{ transform: `translateX(-${currentHallIndex * 100}%)` }}>
+                          {getAvailableHalls().map((hall, index) => (
+                            <div key={hall.ID} className="w-full flex-shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFormData({ ...formData, hall_id: hall.ID });
+                                  if (formErrors.hall_id) {
+                                    setFormErrors({ ...formErrors, hall_id: '' });
+                                  }
+                                }}
+                                className={`w-full relative overflow-hidden rounded-lg border-2 transition-all duration-200 ${formData.hall_id === hall.ID
+                                  ? 'border-blue-500 ring-2 ring-blue-300/50 shadow-md'
+                                  : 'border-gray-200 hover:border-blue-300'
+                                  }`}
+                              >
+                                <div className="h-48 relative bg-gradient-to-br from-gray-100 to-gray-200 overflow-hidden">
+                                  {hall.Photo ? (
+                                    <img
+                                      src={hall.Photo.startsWith('http') ? hall.Photo : `${api}${hall.Photo.startsWith('/') ? hall.Photo : '/' + hall.Photo}`}
+                                      alt={hall.Name}
+                                      className="w-full h-full object-cover"
+                                      onError={(e) => {
+                                        const target = e.currentTarget;
+                                        target.style.display = 'none';
+                                        const fallback = target.nextElementSibling as HTMLElement;
+                                        if (fallback) fallback.style.display = 'flex';
+                                      }}
+                                    />
+                                  ) : null}
+                                  <div
+                                    className={`w-full h-full flex flex-col items-center justify-center ${hall.Photo ? 'hidden' : 'flex'}`}
+                                  >
+                                    <Building2 className="h-12 w-12 text-gray-400" />
+                                    <p className="text-sm text-gray-500 mt-2">{hall.Name}</p>
+                                  </div>
+
+                                  {/* Text Overlay - Bottom Left */}
+                                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 via-black/50 to-transparent p-3">
+                                    <div className="text-white">
+                                      <p className="font-bold text-sm leading-tight">
+                                        {hall.Name}
+                                      </p>
+                                      {hall.Capacity && (
+                                        <p className="text-xs text-white/90 mt-0.5">
+                                          Capacity: {hall.Capacity}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Selected Checkmark - Top Right */}
+                                  {formData.hall_id === hall.ID && (
+                                    <div className="absolute top-2 right-2">
+                                      <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center shadow-md ring-2 ring-white">
+                                        <Check className="h-4 w-4 text-white" />
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
-                              </div>
-                            )}
-                          </div>
-                          <div className="p-2 bg-white border-t border-gray-200">
-                            <p className="font-semibold text-[11px] text-center text-gray-800 truncate">
-                              {hall.Name}
-                            </p>
-                            {hall.Capacity && (
-                              <p className="text-[10px] text-gray-500 text-center truncate">
-                                Capacity: {hall.Capacity}
-                              </p>
-                            )}
-                          </div>
-                        </button>
-                      ))}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Next Button */}
+                        {getAvailableHalls().length > 1 && (
+                          <button
+                            type="button"
+                            onClick={nextHall}
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 z-10 w-7 h-7 bg-white/95 hover:bg-white rounded-full shadow-md flex items-center justify-center transition-all hover:scale-110 border border-gray-200"
+                            aria-label="Next hall"
+                          >
+                            <ChevronRight className="h-4 w-4 text-gray-700" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Carousel Indicators */}
+                      {getAvailableHalls().length > 1 && (
+                        <div className="flex justify-center gap-1.5 mt-1.5">
+                          {getAvailableHalls().map((_, index) => (
+                            <button
+                              key={index}
+                              type="button"
+                              onClick={() => setCurrentHallIndex(index)}
+                              className={`h-1.5 rounded-full transition-all ${index === currentHallIndex
+                                ? 'w-5 bg-blue-500'
+                                : 'w-1.5 bg-gray-300 hover:bg-gray-400'
+                                }`}
+                              aria-label={`Go to hall ${index + 1}`}
+                            />
+                          ))}
+                        </div>
+                      )}
                     </div>
                     {formErrors.hall_id && (
                       <p className="text-xs text-red-600 flex items-center gap-1 mt-1">
@@ -732,32 +971,45 @@ export default function NewBookingPage() {
               </div>
             </div>
 
-            <div className="flex gap-3 pt-6">
+            <div className="flex gap-2 pt-2 border-t border-gray-200">
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => {
                   setDialogOpen(false);
                   setFormErrors({});
-                  setFormData({ event_name: '', event_category_id: 0, hall_id: 0, start_time: '', end_time: '' });
+                  setFormData({
+                    event_name: '',
+                    event_category_id: 0,
+                    hall_id: 0,
+                    start_time: '',
+                    end_time: '',
+                    start_hour: '09',
+                    start_minute: '00',
+                    start_period: 'AM',
+                    end_hour: '05',
+                    end_minute: '00',
+                    end_period: 'PM',
+                  });
+                  setCurrentHallIndex(0);
                 }}
-                className="flex-1 h-11 border-2 border-gray-300 hover:bg-gray-50 font-semibold rounded-lg"
+                className="flex-1 h-9 border-2 border-gray-300 hover:bg-gray-50 font-semibold rounded-lg text-sm"
               >
                 Cancel
               </Button>
               <Button
                 type="submit"
                 disabled={loading || (selectedDate !== null && getAvailableHalls().length === 0)}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold h-11 shadow-md hover:shadow-lg transition-all gap-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold h-9 shadow-md hover:shadow-lg transition-all gap-1.5 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed text-sm"
               >
                 {loading ? (
                   <>
-                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                     Booking...
                   </>
                 ) : (
                   <>
-                    <Check className="h-5 w-5" />
+                    <Check className="h-4 w-4" />
                     Book Now
                   </>
                 )}

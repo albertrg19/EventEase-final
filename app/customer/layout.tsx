@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Calendar, Plus, User, LogOut, CheckSquare, Menu, X, Search, HelpCircle, Bell, Settings } from 'lucide-react';
+import { Calendar, Plus, User, LogOut, CheckSquare, Menu, X, Search, HelpCircle, Bell, Settings, Receipt } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
@@ -79,6 +79,7 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
     { icon: Calendar, label: 'Dashboard', href: '/customer/dashboard' },
     { icon: CheckSquare, label: 'My Bookings', href: '/customer/bookings' },
     { icon: Plus, label: 'New Booking', href: '/customer/booking' },
+    { icon: Receipt, label: 'Invoices', href: '/customer/invoices' },
     { icon: User, label: 'My Profile', href: '/customer/profile' },
   ];
 

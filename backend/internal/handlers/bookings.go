@@ -48,15 +48,22 @@ func (h *BookingHandler) List(c *gin.Context) {
 }
 
 type bookingUpsert struct {
-	CustomerID      uint      `json:"customer_id" binding:"required"`
-	UserID          uint      `json:"user_id" binding:"required"`
-	EventName       string    `json:"event_name" binding:"required"`
-	EventType       string    `json:"event_type" binding:"required"`
-	EventCategoryID uint      `json:"event_category_id" binding:"required"`
-	HallID          uint      `json:"hall_id" binding:"required"`
-	EventDate       time.Time `json:"event_date" binding:"required"`
-	Status          string    `json:"status"`
-	AdminNotes      *string   `json:"admin_notes"`
+	CustomerID      uint       `json:"customer_id"` // Optional, will use authenticated user
+	UserID          uint       `json:"user_id"`     // Optional, will use authenticated user
+	EventName       string     `json:"event_name" binding:"required"`
+	EventType       string     `json:"event_type" binding:"required"`
+	EventCategoryID uint       `json:"event_category_id" binding:"required"`
+	HallID          uint       `json:"hall_id" binding:"required"`
+	EventDate       time.Time  `json:"event_date" binding:"required"`
+	StartTime       *time.Time `json:"start_time"` // Optional time string (HH:MM format)
+	EndTime         *time.Time `json:"end_time"`   // Optional time string (HH:MM format)
+	Status          string     `json:"status"`
+	AdminNotes      *string    `json:"admin_notes"`
+}
+
+// generateBookingRef generates a unique booking reference number
+func generateBookingRef(bookingID uint) string {
+	return fmt.Sprintf("BK-%s-%06d", time.Now().Format("20060102"), bookingID)
 }
 
 func (h *BookingHandler) Create(c *gin.Context) {
@@ -65,39 +72,133 @@ func (h *BookingHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	// Availability: prevent double-booking same hall & date (pending or approved)
-	var count int64
-	if err := h.db.Model(&models.Booking{}).
-		Where("hall_id = ? AND event_date = ? AND status IN ?", req.HallID, req.EventDate, []string{"pending", "approved"}).
-		Count(&count).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "availability check failed"})
+
+	// SECURITY FIX: Always use authenticated user ID from JWT context, ignore client input
+	userID, exists := c.Get("userId")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
-	if count > 0 {
-		c.JSON(http.StatusConflict, gin.H{"error": "hall already booked for that date"})
+	uid := uint(0)
+	if id, ok := userID.(float64); ok {
+		uid = uint(id)
+	} else if id, ok := userID.(uint); ok {
+		uid = id
+	} else {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user id"})
 		return
 	}
-	item := models.Booking{
-		CustomerID:      req.CustomerID,
-		UserID:          req.UserID,
-		EventName:       req.EventName,
-		EventType:       req.EventType,
-		EventCategoryID: req.EventCategoryID,
-		HallID:          req.HallID,
-		EventDate:       req.EventDate,
-		AdminNotes:      req.AdminNotes,
+	// Override any user_id from request with authenticated user ID
+	req.UserID = uid
+	req.CustomerID = uid
+
+	// Validate time range if times are provided
+	if req.StartTime != nil && req.EndTime != nil {
+		// Parse times if they're strings (handle both time.Time and string formats)
+		startTime := *req.StartTime
+		endTime := *req.EndTime
+
+		if !endTime.After(startTime) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "invalid_time_range",
+				"message": "End time must be after start time",
+			})
+			return
+		}
+
+		// Check minimum duration (2 hours)
+		duration := endTime.Sub(startTime)
+		if duration < 2*time.Hour {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "minimum_duration",
+				"message": "Minimum booking duration is 2 hours",
+			})
+			return
+		}
 	}
-	if req.Status != "" {
-		item.Status = models.BookingStatus(req.Status)
-	}
-	if err := h.db.Create(&item).Error; err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "could not create"})
+
+	// RACE CONDITION FIX: Use transaction with row-level locking
+	var item models.Booking
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		// Build availability query
+		query := tx.Model(&models.Booking{}).
+			Where("hall_id = ? AND event_date = ? AND status IN ?",
+				req.HallID, req.EventDate, []string{"pending", "approved"})
+
+		// TIME-BASED AVAILABILITY CHECK: Check for time overlaps if times provided
+		if req.StartTime != nil && req.EndTime != nil {
+			// Check for overlapping time slots
+			// Overlap occurs if: (new_start < existing_end) AND (new_end > existing_start)
+			query = query.Where(
+				"((start_time IS NULL OR start_time <= ?) AND (end_time IS NULL OR end_time > ?)) OR "+
+					"((start_time IS NULL OR start_time < ?) AND (end_time IS NULL OR end_time >= ?)) OR "+
+					"((start_time IS NULL OR start_time >= ?) AND (end_time IS NULL OR end_time <= ?))",
+				req.EndTime, req.StartTime, // New booking starts during existing
+				req.EndTime, req.StartTime, // New booking ends during existing
+				req.StartTime, req.EndTime, // New booking completely within existing
+			)
+		}
+
+		// Use FOR UPDATE to lock rows and prevent race conditions
+		var count int64
+		if err := query.Set("gorm:query_option", "FOR UPDATE").Count(&count).Error; err != nil {
+			return fmt.Errorf("availability check failed: %w", err)
+		}
+
+		if count > 0 {
+			return fmt.Errorf("hall already booked for this time slot")
+		}
+
+		// Create booking within transaction
+		item = models.Booking{
+			CustomerID:      req.CustomerID,
+			UserID:          req.UserID,
+			EventName:       req.EventName,
+			EventType:       req.EventType,
+			EventCategoryID: req.EventCategoryID,
+			HallID:          req.HallID,
+			EventDate:       req.EventDate,
+			StartTime:       req.StartTime,
+			EndTime:         req.EndTime,
+			AdminNotes:      req.AdminNotes,
+			Status:          models.BookingStatusPending,
+		}
+		if req.Status != "" {
+			item.Status = models.BookingStatus(req.Status)
+		}
+
+		if err := tx.Create(&item).Error; err != nil {
+			return fmt.Errorf("could not create booking: %w", err)
+		}
+
+		// Generate and set reference number
+		item.ReferenceNumber = generateBookingRef(item.ID)
+		if err := tx.Model(&item).Update("reference_number", item.ReferenceNumber).Error; err != nil {
+			return fmt.Errorf("could not set reference number: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		if err.Error() == "hall already booked for this time slot" {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":   "time_slot_unavailable",
+				"message": "This time slot is already booked. Please select another time.",
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":   "creation_failed",
+				"message": "Unable to create booking. Please try again.",
+			})
+		}
 		return
 	}
+
 	h.logActivity(c, "create", "booking", &item.ID, fmt.Sprintf("Created booking: %s on %s", item.EventName, item.EventDate.Format("2006-01-02")))
-	
+
 	// Auto-create invoice if booking is created with approved status
-	if item.Status == models.BookingStatusApproved {
+	if string(item.Status) == string(models.BookingStatusApproved) || item.Status == "Approved" {
 		go func() {
 			inv, err := CreateInvoiceForBooking(h.db, item.ID, h.emailService)
 			if err != nil {
@@ -108,7 +209,7 @@ func (h *BookingHandler) Create(c *gin.Context) {
 			}
 		}()
 	}
-	
+
 	c.JSON(http.StatusCreated, item)
 }
 
@@ -132,23 +233,79 @@ func (h *BookingHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	// If hall/date changed, re-check availability
-	if !(item.HallID == req.HallID && item.EventDate.Equal(req.EventDate)) {
-		var count int64
-		if err := h.db.Model(&models.Booking{}).
-			Where("hall_id = ? AND event_date = ? AND id <> ? AND status IN ?", req.HallID, req.EventDate, item.ID, []string{"pending", "approved"}).
-			Count(&count).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "availability check failed"})
-			return
-		}
-		if count > 0 {
-			c.JSON(http.StatusConflict, gin.H{"error": "hall already booked for that date"})
+	// If hall/date/time changed, re-check availability with transaction
+	hallOrDateChanged := !(item.HallID == req.HallID && item.EventDate.Equal(req.EventDate))
+	timeChanged := (req.StartTime != nil && item.StartTime != nil && !req.StartTime.Equal(*item.StartTime)) ||
+		(req.EndTime != nil && item.EndTime != nil && !req.EndTime.Equal(*item.EndTime)) ||
+		(req.StartTime != nil && item.StartTime == nil) ||
+		(req.EndTime != nil && item.EndTime == nil)
+
+	if hallOrDateChanged || timeChanged {
+		err := h.db.Transaction(func(tx *gorm.DB) error {
+			query := tx.Model(&models.Booking{}).
+				Where("hall_id = ? AND event_date = ? AND id <> ? AND status IN ?",
+					req.HallID, req.EventDate, item.ID, []string{"pending", "approved"})
+
+			// Add time overlap check if times provided
+			if req.StartTime != nil && req.EndTime != nil {
+				query = query.Where(
+					"((start_time IS NULL OR start_time <= ?) AND (end_time IS NULL OR end_time > ?)) OR "+
+						"((start_time IS NULL OR start_time < ?) AND (end_time IS NULL OR end_time >= ?)) OR "+
+						"((start_time IS NULL OR start_time >= ?) AND (end_time IS NULL OR end_time <= ?))",
+					req.EndTime, req.StartTime,
+					req.EndTime, req.StartTime,
+					req.StartTime, req.EndTime,
+				)
+			}
+
+			var count int64
+			if err := query.Set("gorm:query_option", "FOR UPDATE").Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				return fmt.Errorf("hall already booked for this time slot")
+			}
+			return nil
+		})
+
+		if err != nil {
+			if err.Error() == "hall already booked for this time slot" {
+				c.JSON(http.StatusConflict, gin.H{
+					"error":   "time_slot_unavailable",
+					"message": "This time slot is already booked. Please select another time.",
+				})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "availability check failed"})
+			}
 			return
 		}
 	}
+	// SECURITY FIX: Use authenticated user ID, but allow admin to update other users' bookings
+	userID, exists := c.Get("userId")
+	if exists {
+		// Only allow users to update their own bookings unless they're admin
+		userRole, _ := c.Get("role")
+		roleStr, _ := userRole.(string)
+		if roleStr != "admin" {
+			uid := uint(0)
+			if id, ok := userID.(float64); ok {
+				uid = uint(id)
+			} else if id, ok := userID.(uint); ok {
+				uid = id
+			}
+			if item.UserID != uid {
+				c.JSON(http.StatusForbidden, gin.H{"error": "can only update your own bookings"})
+				return
+			}
+			// For non-admin users, use authenticated ID
+			req.UserID = uid
+			req.CustomerID = uid
+		}
+	}
+
 	// Save old status BEFORE updating
 	oldStatus := item.Status
-	
+
 	item.CustomerID = req.CustomerID
 	item.UserID = req.UserID
 	item.EventName = req.EventName
@@ -156,6 +313,8 @@ func (h *BookingHandler) Update(c *gin.Context) {
 	item.EventCategoryID = req.EventCategoryID
 	item.HallID = req.HallID
 	item.EventDate = req.EventDate
+	item.StartTime = req.StartTime
+	item.EndTime = req.EndTime
 	item.AdminNotes = req.AdminNotes
 	if req.Status != "" {
 		item.Status = models.BookingStatus(req.Status)

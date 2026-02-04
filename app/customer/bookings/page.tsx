@@ -3,9 +3,10 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Calendar, Eye, Printer, Info, Loader2, MoreVertical, Tag, Building2, Plus } from 'lucide-react';
+import { Calendar, Eye, Printer, Info, Loader2, MoreVertical, Tag, Building2, Plus, Receipt } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import Link from 'next/link';
 
 interface Booking {
   id: number;
@@ -212,15 +213,27 @@ export default function MyBookingsPage() {
                                 View
                               </Button>
                               {booking.status === 'approved' && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => handlePrint(booking)}
-                                  className="bg-gradient-to-r from-green-50 to-green-100 text-green-700 border-green-300 hover:from-green-100 hover:to-green-200 gap-1.5 shadow-sm hover:shadow-md transition-all transform hover:scale-105"
-                                >
-                                  <Printer className="h-3.5 w-3.5" />
-                                  Print
-                                </Button>
+                                <>
+                                  <Link href="/customer/invoices">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="bg-gradient-to-r from-emerald-50 to-emerald-100 text-emerald-700 border-emerald-300 hover:from-emerald-100 hover:to-emerald-200 gap-1.5 shadow-sm hover:shadow-md transition-all transform hover:scale-105"
+                                    >
+                                      <Receipt className="h-3.5 w-3.5" />
+                                      Invoice
+                                    </Button>
+                                  </Link>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handlePrint(booking)}
+                                    className="bg-gradient-to-r from-green-50 to-green-100 text-green-700 border-green-300 hover:from-green-100 hover:to-green-200 gap-1.5 shadow-sm hover:shadow-md transition-all transform hover:scale-105"
+                                  >
+                                    <Printer className="h-3.5 w-3.5" />
+                                    Print
+                                  </Button>
+                                </>
                               )}
                             </>
                           )}

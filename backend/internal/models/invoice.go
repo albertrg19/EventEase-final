@@ -5,27 +5,27 @@ import "time"
 type PaymentStatus string
 
 const (
-	PaymentStatusPending  PaymentStatus = "pending"
-	PaymentStatusPaid     PaymentStatus = "paid"
-	PaymentStatusOverdue  PaymentStatus = "overdue"
+	PaymentStatusPending   PaymentStatus = "pending"
+	PaymentStatusPaid      PaymentStatus = "paid"
+	PaymentStatusOverdue   PaymentStatus = "overdue"
 	PaymentStatusCancelled PaymentStatus = "cancelled"
 )
 
 type Invoice struct {
-	ID             uint          `gorm:"primaryKey"`
-	BookingID      uint          `gorm:"not null;index"`
-	BasePrice      float64       `gorm:"type:numeric(10,2);not null"`
-	AdditionalFees float64       `gorm:"type:numeric(10,2);default:0"`
-	Discount       float64       `gorm:"type:numeric(10,2);default:0"`
-	TotalAmount    float64       `gorm:"type:numeric(10,2);not null"`
-	PaymentStatus  PaymentStatus `gorm:"type:varchar(20);default:pending"`
-	PaymentDate    *time.Time    `gorm:"type:date"`
-	PaymentMethod  *string       `gorm:"type:varchar(50)"`
-	PaymentNotes   *string       `gorm:"type:text"`
-	CreatedAt      time.Time     `gorm:"autoCreateTime"`
+	ID              uint          `gorm:"primaryKey" json:"id"`
+	BookingID       uint          `gorm:"not null;index" json:"booking_id"`
+	BasePrice       float64       `gorm:"type:numeric(10,2);not null" json:"base_price"`
+	AdditionalFees  float64       `gorm:"type:numeric(10,2);default:0" json:"additional_fees"`
+	Discount        float64       `gorm:"type:numeric(10,2);default:0" json:"discount"`
+	TotalAmount     float64       `gorm:"type:numeric(10,2);not null" json:"total_amount"`
+	PaymentStatus   PaymentStatus `gorm:"type:varchar(20);default:pending" json:"payment_status"`
+	PaymentDate     *time.Time    `gorm:"type:date" json:"payment_date"`
+	PaymentMethod   *string       `gorm:"type:varchar(50)" json:"payment_method"`
+	PaymentNotes    *string       `gorm:"type:text" json:"payment_notes"`
+	PaymentDeadline *time.Time    `gorm:"type:date;index" json:"payment_deadline"` // Payment deadline date
+	DaysOverdue     int           `gorm:"default:0" json:"days_overdue"`       // Days past deadline
+	CreatedAt       time.Time     `gorm:"autoCreateTime" json:"created_at"`
 
 	// Relations
-	Booking Booking `gorm:"foreignKey:BookingID"`
+	Booking Booking `gorm:"foreignKey:BookingID" json:"booking"`
 }
-
-
