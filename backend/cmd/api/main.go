@@ -83,6 +83,7 @@ func main() {
 	{
 	// Auth
 		authHandler := handlers.NewAuthHandler(db)
+		oauthHandler := handlers.NewOAuthHandler(db)
 		auth := api.Group("/auth")
 		{
 			auth.POST("/register", authHandler.Register)
@@ -91,6 +92,10 @@ func main() {
 			auth.POST("/reset-password", authHandler.ResetPassword)
 			auth.POST("/verify-email", authHandler.VerifyEmail)
 			auth.POST("/resend-verification", authHandler.ResendVerification)
+			
+			// Google OAuth
+			auth.GET("/google", oauthHandler.GoogleLogin)
+			auth.GET("/google/callback", oauthHandler.GoogleCallback)
 		}
 
 
