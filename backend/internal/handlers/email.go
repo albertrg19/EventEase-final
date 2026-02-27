@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/smtp"
 	"os"
+	"time"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -718,4 +719,113 @@ func (s *EmailService) SendEmailVerificationOTP(email, name, code string) error 
 	}
 
 	return s.sendEmail(email, "Your EventEase Verification Code: "+code, buf.String())
+}
+
+// ── Chat Message Email ──
+
+const chatMessageTemplate = `
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f5f7fa; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+        .header { background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%); color: white; padding: 30px; text-align: center; }
+        .header h1 { margin: 0; font-size: 24px; }
+        .content { padding: 30px; }
+        .message-box { background: #f0f4ff; border-left: 4px solid #2d5a87; border-radius: 8px; padding: 16px 20px; margin: 20px 0; }
+        .message-text { color: #333; font-size: 15px; line-height: 1.6; margin: 0; }
+        .sender-name { font-weight: bold; color: #1e3a5f; font-size: 14px; margin-bottom: 6px; }
+        .details { background: #f8f9fa; border-radius: 8px; padding: 16px; margin: 20px 0; }
+        .detail-row { display: flex; justify-content: space-between; padding: 6px 0; }
+        .detail-label { color: #6c757d; font-size: 13px; }
+        .detail-value { color: #212529; font-weight: 500; font-size: 13px; }
+        .cta-button { display: inline-block; padding: 12px 28px; background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%); color: white !important; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 20px 0; font-size: 14px; }
+        .footer { text-align: center; padding: 20px; color: #6c757d; font-size: 12px; background: #f8f9fa; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>EventEase</h1>
+            <p style="margin: 10px 0 0 0; opacity: 0.9;">💬 New Message</p>
+        </div>
+        <div class="content">
+            <p>Dear {{.RecipientName}},</p>
+            <p>You have a new message regarding your booking:</p>
+
+            <div class="message-box">
+                <p class="sender-name">{{.SenderName}} ({{.SenderRole}}):</p>
+                <p class="message-text">{{.MessagePreview}}</p>
+            </div>
+
+            <div class="details">
+                <div class="detail-row">
+                    <span class="detail-label">Booking</span>
+                    <span class="detail-value">{{.EventName}}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Sent at</span>
+                    <span class="detail-value">{{.SentAt}}</span>
+                </div>
+            </div>
+
+            <p style="font-size: 14px; color: #555;">Log in to EventEase to view and reply to this message.</p>
+        </div>
+        <div class="footer">
+            <p>© EventEase - Venue Reservation System</p>
+            <p>This is an automated notification. Please do not reply to this email.</p>
+        </div>
+    </div>
+</body>
+</html>
+`
+
+type ChatMessageEmailData struct {
+	RecipientName  string
+	SenderName     string
+	SenderRole     string
+	EventName      string
+	MessagePreview string
+	SentAt         string
+}
+
+func (s *EmailService) SendChatMessageEmail(recipientEmail, recipientName, senderName, senderRole, eventName, messageContent string) error {
+	if recipientEmail == "" || !s.enabled {
+		if !s.enabled {
+			fmt.Printf("[Email Disabled] Chat notification to: %s from: %s\n", recipientEmail, senderName)
+		}
+		return nil
+	}
+
+	// Truncate message preview
+	preview := messageContent
+	if len(preview) > 200 {
+		preview = preview[:200] + "…"
+	}
+
+	// Capitalize role
+	role := cases.Title(language.English).String(senderRole)
+
+	data := ChatMessageEmailData{
+		RecipientName:  recipientName,
+		SenderName:     senderName,
+		SenderRole:     role,
+		EventName:      eventName,
+		MessagePreview: preview,
+		SentAt:         time.Now().Format("January 2, 2006 at 3:04 PM"),
+	}
+
+	tmpl, err := template.New("chatMessage").Parse(chatMessageTemplate)
+	if err != nil {
+		return err
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return err
+	}
+
+	subject := fmt.Sprintf("New message from %s — %s", senderName, eventName)
+	return s.sendEmail(recipientEmail, subject, buf.String())
 }

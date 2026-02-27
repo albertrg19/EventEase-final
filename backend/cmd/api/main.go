@@ -58,6 +58,19 @@ func main() {
 	backupHandler.StartScheduler(backupInterval)
 	defer backupHandler.StopScheduler()
 
+	
+	invoiceHandler := handlers.NewInvoiceHandler(db)
+
+	
+	go func() {
+		// Run every 24 hours
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			invoiceHandler.AutoSendReminders()
+		}
+	}()
+
 	r := gin.Default()
 
 	// Increase multipart form memory limit for file uploads (default is 32MB, set to 50MB)
@@ -104,13 +117,14 @@ func main() {
 		hallHandler := handlers.NewHallHandler(db)
 		eventHandler := handlers.NewEventHandler(db)
 		invoiceHandler := handlers.NewInvoiceHandler(db)
+		emailService := handlers.NewEmailService(db)
 		bookingHandler := handlers.NewBookingHandler(db)
 		userHandler := handlers.NewUserHandler(db)
 		uploadHandler := handlers.NewUploadHandler()
 		activityHandler := handlers.NewAdminActivityHandler(db)
 		favoriteHandler := handlers.NewFavoriteHandler(db)
 		reviewHandler := handlers.NewReviewHandler(db)
-		chatHandler := handlers.NewChatHandler(db)
+		chatHandler := handlers.NewChatHandler(db, emailService)
 		chatTemplateHandler := handlers.NewChatTemplateHandler(db)
 		autoReplyHandler := handlers.NewAutoReplyHandler(db)
 
@@ -217,6 +231,7 @@ func main() {
 			secure.DELETE("/chat/messages/:message_id", chatHandler.DeleteMessage)
 			secure.GET("/chat/bookings/:booking_id/search", chatHandler.SearchMessages)
 			secure.GET("/chat/unread-count", chatHandler.GetUnreadCount)
+			secure.GET("/chat/notification-count", chatHandler.GetNotificationCount)
 
 			// Chat file uploads (accessible to both admin and customer)
 			secure.POST("/chat/uploads", uploadHandler.ChatFile)

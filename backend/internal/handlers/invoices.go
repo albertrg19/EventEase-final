@@ -495,6 +495,10 @@ func (h *InvoiceHandler) SendReminder(c *gin.Context) {
 		return
 	}
 
+	// Update LastRemindedAt
+	now := time.Now()
+	h.db.Model(&item).Update("last_reminded_at", &now)
+
 	h.logActivity(c, "send_reminder", "invoice", &item.ID, fmt.Sprintf("Sent payment reminder for invoice #%d to %s", item.ID, user.Email))
 
 	c.JSON(http.StatusOK, gin.H{
@@ -923,4 +927,49 @@ func generateInvoicePDF(invoice *models.Invoice) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+// AutoSendReminders finds overdue and pending invoices and sends reminder emails
+func (h *InvoiceHandler) AutoSendReminders() {
+	var invoices []models.Invoice
+
+	// Find invoices that are pending or overdue, where LastRemindedAt is null or older than 3 days
+	// Using raw SQL for date math compatibility (works in SQLite, Postgres, MySQL)
+	// We'll just fetch them all and do the date math in Go for simpler compatibility across DBs
+	if err := h.db.Where("payment_status IN (?)", []string{string(models.PaymentStatusPending), string(models.PaymentStatusOverdue)}).
+		Preload("Booking").
+		Preload("Booking.User").
+		Find(&invoices).Error; err != nil {
+		fmt.Printf("ERROR: AutoSendReminders failed to fetch invoices: %v\n", err)
+		return
+	}
+
+	now := time.Now()
+	remindersSent := 0
+	
+	for _, inv := range invoices {
+		// Only send if it hasn't been reminded yet, or if the last reminder was > 3 days ago
+		if inv.LastRemindedAt == nil || now.Sub(*inv.LastRemindedAt) > 72*time.Hour {
+			// Skip if User or email is missing
+			if inv.Booking.UserID == 0 || inv.Booking.User.Email == "" {
+				continue
+			}
+
+			err := h.emailService.SendPaymentReminder(&inv, &inv.Booking, &inv.Booking.User)
+			if err != nil {
+				fmt.Printf("ERROR: Failed to auto-send reminder for invoice #%d: %v\n", inv.ID, err)
+				continue
+			}
+
+			// Update LastRemindedAt
+			if err := h.db.Model(&inv).Update("last_reminded_at", &now).Error; err != nil {
+				fmt.Printf("ERROR: Failed to update last_reminded_at for invoice #%d: %v\n", inv.ID, err)
+			}
+			remindersSent++
+		}
+	}
+	
+	if remindersSent > 0 {
+		fmt.Printf("INFO: AutoSendReminders sent %d reminders successfully\n", remindersSent)
+	}
 }

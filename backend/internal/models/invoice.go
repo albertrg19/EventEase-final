@@ -24,6 +24,7 @@ type Invoice struct {
 	PaymentNotes    *string       `gorm:"type:text" json:"payment_notes"`
 	PaymentDeadline *time.Time    `gorm:"type:date;index" json:"payment_deadline"` // Payment deadline date
 	DaysOverdue     int           `gorm:"default:0" json:"days_overdue"`       // Days past deadline
+	LastRemindedAt  *time.Time    `json:"last_reminded_at"`                    // Last time a reminder was sent
 	CreatedAt       time.Time     `gorm:"autoCreateTime" json:"created_at"`
 
 	// Relations

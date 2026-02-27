@@ -57,6 +57,7 @@ type bookingUpsert struct {
 	EventDate       time.Time  `json:"event_date" binding:"required"`
 	StartTime       *time.Time `json:"start_time"` // Optional time string (HH:MM format)
 	EndTime         *time.Time `json:"end_time"`   // Optional time string (HH:MM format)
+	BookingType     string     `json:"booking_type"` // half_day_am, half_day_pm, full_day, custom
 	Status          string     `json:"status"`
 	AdminNotes      *string    `json:"admin_notes"`
 }
@@ -162,6 +163,10 @@ func (h *BookingHandler) Create(c *gin.Context) {
 			EndTime:         req.EndTime,
 			AdminNotes:      req.AdminNotes,
 			Status:          models.BookingStatusPending,
+			BookingType:     models.BookingTypeCustom,
+		}
+		if req.BookingType != "" {
+			item.BookingType = models.BookingType(req.BookingType)
 		}
 		if req.Status != "" {
 			item.Status = models.BookingStatus(req.Status)

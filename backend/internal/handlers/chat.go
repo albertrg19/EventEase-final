@@ -16,17 +16,19 @@ import (
 )
 
 type ChatHandler struct {
-	db          *gorm.DB
-	upgrader    websocket.Upgrader
-	connections map[uint]map[*websocket.Conn]*ConnectionInfo // bookingID -> connections with user info
-	typingUsers map[uint]map[uint]time.Time      // bookingID -> userID -> last typing time
+	db           *gorm.DB
+	emailService *EmailService
+	upgrader     websocket.Upgrader
+	connections  map[uint]map[*websocket.Conn]*ConnectionInfo // bookingID -> connections with user info
+	typingUsers  map[uint]map[uint]time.Time      // bookingID -> userID -> last typing time
 	onlineAdmins map[uint]time.Time              // adminID -> last seen time
-	mu          sync.RWMutex
+	mu           sync.RWMutex
 }
 
-func NewChatHandler(db *gorm.DB) *ChatHandler {
+func NewChatHandler(db *gorm.DB, emailService *EmailService) *ChatHandler {
 	handler := &ChatHandler{
-		db: db,
+		db:           db,
+		emailService: emailService,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true // In production, validate origin
@@ -137,10 +139,11 @@ type ReadReceiptInfo struct {
 
 // TypingEvent represents typing indicator event
 type TypingEvent struct {
-	Type     string `json:"type"` // "typing_start" or "typing_stop"
-	UserID   uint   `json:"user_id"`
-	UserName string `json:"user_name"`
-	BookingID uint  `json:"booking_id"`
+	Type      string `json:"type"` // "typing_start" or "typing_stop"
+	UserID    uint   `json:"user_id"`
+	UserName  string `json:"user_name"`
+	UserRole  string `json:"user_role"`
+	BookingID uint   `json:"booking_id"`
 }
 
 type UserInfo struct {
@@ -342,6 +345,29 @@ func (h *ChatHandler) SendMessage(c *gin.Context) {
 
 	// Broadcast to WebSocket connections
 	h.broadcastMessage(booking.ID, response)
+
+	// Send email notification to the other party (async)
+	if h.emailService != nil {
+		go func() {
+			if roleStr == "admin" {
+				// Admin sent message -> email the customer
+				var customer models.User
+				if err := h.db.First(&customer, booking.UserID).Error; err == nil && customer.Email != "" {
+					h.emailService.SendChatMessageEmail(customer.Email, customer.Name, sender.Name, "admin", booking.EventName, req.Content)
+				}
+			} else {
+				// Customer sent message -> email admin(s)
+				var admins []models.User
+				if err := h.db.Where("role = ?", "admin").Find(&admins).Error; err == nil {
+					for _, admin := range admins {
+						if admin.Email != "" {
+							h.emailService.SendChatMessageEmail(admin.Email, admin.Name, sender.Name, "customer", booking.EventName, req.Content)
+						}
+					}
+				}
+			}
+		}()
+	}
 
 	// Check if customer sent message and admin is offline - send auto-reply
 	if roleStr != "admin" {
@@ -633,6 +659,27 @@ func (h *ChatHandler) HandleWebSocket(c *gin.Context) {
 			// Broadcast to all connections for this booking (including sender)
 			h.broadcastMessage(bid, response)
 
+			// Send email notification to the other party (async)
+			if h.emailService != nil {
+				go func() {
+					if roleStr == "admin" {
+						var customer models.User
+						if err := h.db.First(&customer, booking.UserID).Error; err == nil && customer.Email != "" {
+							h.emailService.SendChatMessageEmail(customer.Email, customer.Name, sender.Name, "admin", booking.EventName, content)
+						}
+					} else {
+						var admins []models.User
+						if err := h.db.Where("role = ?", "admin").Find(&admins).Error; err == nil {
+							for _, admin := range admins {
+								if admin.Email != "" {
+									h.emailService.SendChatMessageEmail(admin.Email, admin.Name, sender.Name, "customer", booking.EventName, content)
+								}
+							}
+						}
+					}
+				}()
+			}
+
 			// Check if customer sent message and admin is offline - send auto-reply
 			if roleStr != "admin" {
 				// Customer sent message via WebSocket, check if we need to send auto-reply
@@ -688,6 +735,7 @@ func (h *ChatHandler) handleTypingStart(bookingID, userID uint, conn *websocket.
 		Type:      "typing_start",
 		UserID:    userID,
 		UserName:  user.Name,
+		UserRole:  string(user.Role),
 		BookingID: bookingID,
 	}
 
@@ -720,6 +768,7 @@ func (h *ChatHandler) handleTypingStop(bookingID, userID uint, conn *websocket.C
 		Type:      "typing_stop",
 		UserID:    userID,
 		UserName:  user.Name,
+		UserRole:  string(user.Role),
 		BookingID: bookingID,
 	}
 
@@ -784,6 +833,76 @@ func (h *ChatHandler) GetUnreadCount(c *gin.Context) {
 		Count(&count)
 
 	c.JSON(http.StatusOK, gin.H{"count": count})
+}
+
+// GetNotificationCount returns message notification data using read_receipts (not the auto-read flag)
+func (h *ChatHandler) GetNotificationCount(c *gin.Context) {
+	userID, _ := c.Get("userId")
+	userRole, _ := c.Get("role")
+	uid := uint(0)
+	if id, ok := userID.(float64); ok {
+		uid = uint(id)
+	} else if id, ok := userID.(uint); ok {
+		uid = id
+	}
+	roleStr, _ := userRole.(string)
+
+	type BookingMsg struct {
+		BookingID  uint   `json:"booking_id"`
+		EventName  string `json:"event_name"`
+		SenderName string `json:"sender_name"`
+		MsgCount   int64  `json:"count"`
+		LatestAt   string `json:"latest_at"`
+	}
+
+	// Get bookings for this user
+	var bookings []models.Booking
+	if roleStr == "admin" {
+		h.db.Find(&bookings)
+	} else {
+		h.db.Where("user_id = ?", uid).Find(&bookings)
+	}
+
+	var results []BookingMsg
+	var totalCount int64
+
+	for _, booking := range bookings {
+		// Count messages NOT sent by this user, NOT deleted, and NOT acknowledged via read_receipts
+		var count int64
+		h.db.Model(&models.Message{}).
+			Where("booking_id = ? AND sender_id != ? AND is_deleted = ?", booking.ID, uid, false).
+			Where("id NOT IN (SELECT message_id FROM message_read_receipts WHERE user_id = ?)", uid).
+			Count(&count)
+
+		if count > 0 {
+			// Get the latest message sender name and timestamp
+			var latestMsg models.Message
+			h.db.Where("booking_id = ? AND sender_id != ? AND is_deleted = ?", booking.ID, uid, false).
+				Where("id NOT IN (SELECT message_id FROM message_read_receipts WHERE user_id = ?)", uid).
+				Preload("Sender").
+				Order("created_at DESC").
+				First(&latestMsg)
+
+			senderName := "Someone"
+			if latestMsg.Sender.Name != "" {
+				senderName = latestMsg.Sender.Name
+			}
+
+			results = append(results, BookingMsg{
+				BookingID:  booking.ID,
+				EventName:  booking.EventName,
+				SenderName: senderName,
+				MsgCount:   count,
+				LatestAt:   latestMsg.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			})
+			totalCount += count
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"total":    totalCount,
+		"bookings": results,
+	})
 }
 
 // UpdateMessage edits an existing message

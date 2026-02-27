@@ -10,6 +10,15 @@ const (
 	BookingStatusRejected BookingStatus = "rejected"
 )
 
+type BookingType string
+
+const (
+	BookingTypeHalfDayAM BookingType = "half_day_am"  // 8AM - 12PM
+	BookingTypeHalfDayPM BookingType = "half_day_pm"  // 1PM - 5PM
+	BookingTypeFullDay   BookingType = "full_day"     // 8AM - 5PM
+	BookingTypeCustom    BookingType = "custom"       // User-defined
+)
+
 type Booking struct {
 	ID              uint          `gorm:"primaryKey" json:"id"`
 	CustomerID      uint          `gorm:"not null" json:"customer_id"`
@@ -23,6 +32,7 @@ type Booking struct {
 	EndTime         *time.Time    `gorm:"type:time" json:"end_time"`                    // End time of the event
 	ReferenceNumber string        `gorm:"type:varchar(50);uniqueIndex" json:"reference_number"` // Unique booking reference
 	Status          BookingStatus `gorm:"type:varchar(20);default:pending" json:"status"`
+	BookingType     BookingType   `gorm:"type:varchar(20);default:custom" json:"booking_type"`
 	CreatedAt       time.Time     `gorm:"autoCreateTime" json:"created_at"`
 	AdminNotes      *string       `gorm:"type:text" json:"admin_notes"`
 
