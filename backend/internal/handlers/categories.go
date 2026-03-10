@@ -103,6 +103,22 @@ func (h *CategoryHandler) Delete(c *gin.Context) {
 	}
 	catID := cat.ID
 	catName := cat.Name
+	// Update DeletedBy before soft deleting
+	if id, exists := c.Get("userId"); exists {
+		var uid uint
+		switch v := id.(type) {
+		case float64:
+			uid = uint(v)
+		case uint:
+			uid = v
+		case int:
+			uid = uint(v)
+		}
+		if uid > 0 {
+			h.db.Model(&models.EventCategory{}).Where("id = ?", catID).Update("deleted_by", uid)
+		}
+	}
+
 	if err := h.db.Delete(&models.EventCategory{}, catID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed"})
 		return

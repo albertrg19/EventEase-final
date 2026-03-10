@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	"venue-reservation/backend/internal/models"
+	"venue-reservation/backend/internal/services"
 )
 
 type AuthHandler struct {
@@ -29,15 +30,26 @@ func NewAuthHandler(db *gorm.DB) *AuthHandler {
 }
 
 type registerRequest struct {
-    Name     string  `json:"name" binding:"required"`
-    Email    string  `json:"email" binding:"required,email"`
-    Phone    *string `json:"phone"`
-    Password string  `json:"password" binding:"required,min=6"`
+    Name     string `json:"name" binding:"required"`
+    Email    string `json:"email" binding:"required,email"`
+    Phone    string `json:"phone" binding:"required"`
+    Password string `json:"password" binding:"required,min=6"`
 }
 
 type loginRequest struct {
-    Email    string `json:"email" binding:"required,email"`
-    Password string `json:"password" binding:"required"`
+    Identifier string `json:"identifier" binding:"required"` // Can be Email or Phone
+    Password   string `json:"password" binding:"required"`
+}
+
+type requestOTPRequest struct {
+	Identifier string `json:"identifier" binding:"required"`
+	Method     string `json:"method" binding:"required,oneof=email sms"`
+}
+
+type verifyOTPRequest struct {
+	Identifier string `json:"identifier" binding:"required"`
+	Code       string `json:"code" binding:"required,len=6"`
+	Method     string `json:"method" binding:"required,oneof=email sms"`
 }
 
 type forgotPasswordRequest struct {
@@ -84,10 +96,17 @@ func (h *AuthHandler) Register(c *gin.Context) {
         return
     }
 
-    // Check existing
-    var existing models.User
-    if err := h.db.Where("email = ?", req.Email).First(&existing).Error; err == nil {
+    // Check existing email
+    var existingEmail models.User
+    if err := h.db.Where("email = ?", req.Email).First(&existingEmail).Error; err == nil {
         c.JSON(http.StatusConflict, gin.H{"error": "email already in use"})
+        return
+    }
+
+    // Check existing phone
+    var existingPhone models.User
+    if err := h.db.Where("phone = ?", req.Phone).First(&existingPhone).Error; err == nil {
+        c.JSON(http.StatusConflict, gin.H{"error": "phone number already in use"})
         return
     }
 
@@ -97,19 +116,14 @@ func (h *AuthHandler) Register(c *gin.Context) {
         return
     }
 
-	// Generate 6-digit verification code
-	verificationCode := generateOTP()
-	now := time.Now()
-
 	user := models.User{
 		Name:               req.Name,
 		Email:              req.Email,
-		Phone:              req.Phone,
+		Phone:              &req.Phone,
 		Password:           string(hashed),
 		Role:               models.UserRoleCustomer,
 		EmailVerified:      false,
-		VerificationToken:  &verificationCode,
-		VerificationSentAt: &now,
+		PhoneVerified:      false,
 	}
 
 	if err := h.db.Create(&user).Error; err != nil {
@@ -117,14 +131,11 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	// Send verification email with OTP code
-	go h.emailService.SendEmailVerificationOTP(user.Email, user.Name, verificationCode)
-
 	c.JSON(http.StatusCreated, gin.H{
 		"id":             user.ID,
 		"email":          user.Email,
-		"email_verified": false,
-		"message":        "Registration successful! Please check your email for the 6-digit verification code.",
+		"phone":          user.Phone,
+		"message":        "Registration successful! Please verify your account.",
 	})
 }
 
@@ -136,7 +147,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	var user models.User
-	if err := h.db.Where("email = ?", req.Email).First(&user).Error; err != nil {
+	// Allow login via email or phone
+	if err := h.db.Where("email = ? OR phone = ?", req.Identifier, req.Identifier).First(&user).Error; err != nil {
 		// Log failed login attempt
 		h.logLoginAttempt(c, 0, false)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
@@ -148,6 +160,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		h.logLoginAttempt(c, user.ID, false)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 		return
+	}
+
+	// Block login if neither email nor phone is verified (customers only)
+	if user.Role == models.UserRoleCustomer {
+		if !user.EmailVerified && !user.PhoneVerified {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Please verify your email or phone number before logging in."})
+			return
+		}
 	}
 
 	// Log successful login
@@ -346,82 +366,129 @@ func findSubstring(s, substr string) bool {
 	return false
 }
 
-// VerifyEmail validates the verification code and marks email as verified
-func (h *AuthHandler) VerifyEmail(c *gin.Context) {
-	var req verifyEmailRequest
+// RequestOTP generates a 6-digit code, saves it to the DB, and fires the Email or SMS depending on the method.
+func (h *AuthHandler) RequestOTP(c *gin.Context) {
+	var req requestOTPRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	// Identify User
 	var user models.User
-	if err := h.db.Where("email = ? AND verification_token = ?", req.Email, req.Code).First(&user).Error; err != nil {
+	if req.Method == "email" {
+		if err := h.db.Where("email = ?", req.Identifier).First(&user).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Account not found with that email."})
+			return
+		}
+	} else if req.Method == "sms" {
+		if err := h.db.Where("phone = ?", req.Identifier).First(&user).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Account not found with that phone number."})
+			return
+		}
+	}
+
+	// Basic rate limiting: check if they requested recently to avoid spam
+	var lastOTP models.OTPVerification
+	if err := h.db.Where("identifier = ?", req.Identifier).Order("created_at desc").First(&lastOTP).Error; err == nil {
+		if time.Since(lastOTP.CreatedAt) < 1*time.Minute {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Please wait a minute before requesting another code."})
+			return
+		}
+	}
+
+	code := generateOTP()
+	otp := models.OTPVerification{
+		Identifier: req.Identifier,
+		Code:       code,
+		ExpiresAt:  time.Now().Add(5 * time.Minute),
+	}
+
+	if err := h.db.Create(&otp).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not generate OTP"})
+		return
+	}
+
+	// Fire the transmission method
+	if req.Method == "email" {
+		go h.emailService.SendEmailVerificationOTP(user.Email, user.Name, code)
+	} else if req.Method == "sms" {
+		msg := fmt.Sprintf("Your EventEase verification code is %s. Valid for 5 minutes. Do not share this code.", code)
+		go services.SendSMS(*user.Phone, msg)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Verification code dispatched via " + req.Method})
+}
+
+// VerifyOTP validates the verification code and activates the account, automatically logging them in.
+func (h *AuthHandler) VerifyOTP(c *gin.Context) {
+	var req verifyOTPRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var otp models.OTPVerification
+	if err := h.db.Where("identifier = ? AND code = ?", req.Identifier, req.Code).First(&otp).Error; err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid verification code"})
 		return
 	}
 
-	// Check if code is older than 10 minutes (OTP codes expire faster)
-	if user.VerificationSentAt != nil && time.Since(*user.VerificationSentAt) > 10*time.Minute {
+	if time.Now().After(otp.ExpiresAt) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Verification code has expired. Please request a new one."})
 		return
 	}
 
-	// Mark email as verified
-	user.EmailVerified = true
-	user.VerificationToken = nil
+	// Consume OTP
+	otp.IsVerified = true
+	h.db.Save(&otp)
+
+	// Fetch their user account
+	var user models.User
+	if req.Method == "email" {
+		if err := h.db.Where("email = ?", req.Identifier).First(&user).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "User account missing"})
+			return
+		}
+		user.EmailVerified = true
+	} else if req.Method == "sms" {
+		if err := h.db.Where("phone = ?", req.Identifier).First(&user).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "User account missing"})
+			return
+		}
+		user.PhoneVerified = true
+	}
 
 	if err := h.db.Save(&user).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not verify email"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user verification status"})
+		return
+	}
+
+	// Authenticate the user instantly using JWT
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "dev-secret-change-me"
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub":            user.ID,
+		"email":          user.Email,
+		"role":           user.Role,
+		"email_verified": user.EmailVerified,
+		"exp":            time.Now().Add(24 * time.Hour).Unix(),
+		"iat":            time.Now().Unix(),
+		"nbf":            time.Now().Unix(),
+	})
+
+	signed, err := token.SignedString([]byte(jwtSecret))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create token"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":        "Email verified successfully! You can now login.",
-		"email_verified": true,
+		"message":        "Account verified successfully! Logging you in...",
+		"token":          signed,
+		"email_verified": user.EmailVerified,
 	})
-}
-
-// ResendVerification resends the verification email
-func (h *AuthHandler) ResendVerification(c *gin.Context) {
-	var req resendVerificationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	var user models.User
-	if err := h.db.Where("email = ?", req.Email).First(&user).Error; err != nil {
-		// Don't reveal if email exists
-		c.JSON(http.StatusOK, gin.H{"message": "If the email exists, a verification link has been sent"})
-		return
-	}
-
-	// Check if already verified
-	if user.EmailVerified {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Email is already verified"})
-		return
-	}
-
-	// Rate limit: don't allow resending within 1 minute
-	if user.VerificationSentAt != nil && time.Since(*user.VerificationSentAt) < 1*time.Minute {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Please wait before requesting another verification email"})
-		return
-	}
-
-	// Generate new 6-digit verification code
-	verificationCode := generateOTP()
-	now := time.Now()
-
-	user.VerificationToken = &verificationCode
-	user.VerificationSentAt = &now
-
-	if err := h.db.Save(&user).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not save verification code"})
-		return
-	}
-
-	// Send verification email with OTP code
-	go h.emailService.SendEmailVerificationOTP(user.Email, user.Name, verificationCode)
-
-	c.JSON(http.StatusOK, gin.H{"message": "Verification code sent successfully"})
 }

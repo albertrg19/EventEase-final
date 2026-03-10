@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 type EventHall struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
@@ -8,8 +12,10 @@ type EventHall struct {
 	Location    string    `gorm:"type:text;default:''" json:"location"`
 	Capacity    int       `gorm:"not null" json:"capacity"`
 	Description *string   `gorm:"type:text" json:"description"`
-	CreatedAt   time.Time `gorm:"autoCreateTime" json:"created_at"`
-	Price       float64   `gorm:"type:numeric(10,2);default:0" json:"price"`
+	CreatedAt   time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+	DeletedBy   *uint          `json:"deleted_by,omitempty"`
+	Price       float64        `gorm:"type:numeric(10,2);default:0" json:"price"`
 	MaxCapacity int       `gorm:"default:0" json:"max_capacity"`
 	Photo       *string   `gorm:"type:varchar(255)" json:"photo"`
 

@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 type PaymentStatus string
 
@@ -25,7 +29,9 @@ type Invoice struct {
 	PaymentDeadline *time.Time    `gorm:"type:date;index" json:"payment_deadline"` // Payment deadline date
 	DaysOverdue     int           `gorm:"default:0" json:"days_overdue"`       // Days past deadline
 	LastRemindedAt  *time.Time    `json:"last_reminded_at"`                    // Last time a reminder was sent
-	CreatedAt       time.Time     `gorm:"autoCreateTime" json:"created_at"`
+	CreatedAt       time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	DeletedAt       gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+	DeletedBy       *uint          `json:"deleted_by,omitempty"`
 
 	// Relations
 	Booking Booking `gorm:"foreignKey:BookingID" json:"booking"`

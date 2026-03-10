@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"venue-reservation/backend/internal/models"
+	"venue-reservation/backend/internal/services"
 )
 
 // parseDateString parses a date string in various formats and returns a time.Time
@@ -429,6 +431,23 @@ func (h *InvoiceHandler) Delete(c *gin.Context) {
 
 	invoiceID := item.ID
 	bookingID := item.BookingID
+
+	// Update DeletedBy before soft deleting
+	if userId, exists := c.Get("userId"); exists {
+		var uid uint
+		switch v := userId.(type) {
+		case float64:
+			uid = uint(v)
+		case uint:
+			uid = v
+		case int:
+			uid = uint(v)
+		}
+		if uid > 0 {
+			h.db.Model(&item).Update("deleted_by", uid)
+		}
+	}
+
 	if err := h.db.Delete(&models.Invoice{}, invoiceID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete invoice"})
 		return
@@ -495,6 +514,18 @@ func (h *InvoiceHandler) SendReminder(c *gin.Context) {
 		return
 	}
 
+	// Send SMS Notification
+	if user.Phone != nil && *user.Phone != "" {
+		msg := fmt.Sprintf("Hi %s! This is a reminder from EventEase to settle your invoice for booking '%s'. Amount due: PHP %.2f.", user.Name, item.Booking.EventName, item.TotalAmount)
+		log.Printf("[DEBUG] About to send Invoice %d SMS to %s: %s", item.ID, *user.Phone, msg)
+		go func() {
+			err := services.SendSMS(*user.Phone, msg)
+			if err != nil {
+				log.Printf("[ERROR] Invoice SMS failed: %v", err)
+			}
+		}()
+	}
+
 	// Update LastRemindedAt
 	now := time.Now()
 	h.db.Model(&item).Update("last_reminded_at", &now)
@@ -502,7 +533,7 @@ func (h *InvoiceHandler) SendReminder(c *gin.Context) {
 	h.logActivity(c, "send_reminder", "invoice", &item.ID, fmt.Sprintf("Sent payment reminder for invoice #%d to %s", item.ID, user.Email))
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("Payment reminder sent to %s", user.Email),
+		"message": fmt.Sprintf("Payment reminder sent to %s via Email and SMS", user.Email),
 		"email":   user.Email,
 	})
 }

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"venue-reservation/backend/internal/models"
+	"venue-reservation/backend/internal/services"
 )
 
 type BookingHandler struct {
@@ -363,7 +365,7 @@ func (h *BookingHandler) Update(c *gin.Context) {
 		}
 	}
 
-	// Send email notification if status changed
+	// Send email and SMS notification if status changed
 	if statusChanged {
 		go func() {
 			var user models.User
@@ -371,6 +373,23 @@ func (h *BookingHandler) Update(c *gin.Context) {
 			h.db.First(&user, item.UserID)
 			h.db.First(&hall, item.HallID)
 			h.emailService.SendBookingStatusEmail(&item, &user, &hall)
+
+			// Send SMS Notification
+			if user.Phone != nil && *user.Phone != "" {
+				var msg string
+				if item.Status == models.BookingStatusApproved {
+					msg = fmt.Sprintf("Hi %s, your EventEase booking '%s' on %s is confirmed. Please login to view details.", user.Name, item.EventName, item.EventDate.Format("Jan 02, 2006"))
+				} else if item.Status == models.BookingStatusRejected {
+					msg = fmt.Sprintf("Hi %s. Unfortunately, your EventEase booking '%s' was REJECTED. Please contact us for details.", user.Name, item.EventName)
+				} else {
+					msg = fmt.Sprintf("Hi %s, the status of your EventEase booking '%s' was changed to %s.", user.Name, item.EventName, item.Status)
+				}
+				log.Printf("[DEBUG] About to send Booking %s SMS to %s: %s", item.Status, *user.Phone, msg)
+				err := services.SendSMS(*user.Phone, msg)
+				if err != nil {
+					log.Printf("[ERROR] Booking SMS failed: %v", err)
+				}
+			}
 		}()
 	}
 
@@ -385,10 +404,69 @@ func (h *BookingHandler) Delete(c *gin.Context) {
 	}
 	itemID := item.ID
 	eventName := item.EventName
+
+	// Update DeletedBy before soft deleting
+	if userId, exists := c.Get("userId"); exists {
+		var uid uint
+		switch v := userId.(type) {
+		case float64:
+			uid = uint(v)
+		case uint:
+			uid = v
+		case int:
+			uid = uint(v)
+		}
+		if uid > 0 {
+			h.db.Model(&models.Booking{}).Where("id = ?", itemID).Update("deleted_by", uid)
+		}
+	}
+
 	if err := h.db.Delete(&models.Booking{}, itemID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed"})
 		return
 	}
 	h.logActivity(c, "delete", "booking", &itemID, fmt.Sprintf("Deleted booking: %s", eventName))
 	c.Status(http.StatusNoContent)
+}
+
+func (h *BookingHandler) Cancel(c *gin.Context) {
+	// SECURITY FIX: Always use authenticated user ID from JWT context
+	userID, exists := c.Get("userId")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	uid := uint(0)
+	if id, ok := userID.(float64); ok {
+		uid = uint(id)
+	} else if id, ok := userID.(uint); ok {
+		uid = id
+	}
+
+	var item models.Booking
+	if err := h.db.First(&item, c.Param("id")).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "booking not found"})
+		return
+	}
+
+	// Ensure the booking belongs to the user
+	if item.UserID != uid {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "message": "you can only cancel your own bookings"})
+		return
+	}
+
+	if item.Status != models.BookingStatusPending {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_status", "message": "only pending bookings can be cancelled"})
+		return
+	}
+
+	item.Status = models.BookingStatusCancelled
+	if err := h.db.Save(&item).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "update_failed", "message": "could not cancel booking"})
+		return
+	}
+
+	h.logActivity(c, "cancel", "booking", &item.ID, fmt.Sprintf("Customer cancelled pending booking: %s", item.EventName))
+
+	c.JSON(http.StatusOK, gin.H{"message": "Booking cancelled successfully"})
 }

@@ -40,6 +40,7 @@ func main() {
 		&models.MessageReadReceipt{},
 		&models.ChatTemplate{},
 		&models.AutoReplyConfig{},
+		&models.OTPVerification{},
 	); err != nil {
 		log.Fatalf("auto migration failed: %v", err)
 	}
@@ -58,10 +59,8 @@ func main() {
 	backupHandler.StartScheduler(backupInterval)
 	defer backupHandler.StopScheduler()
 
-	
 	invoiceHandler := handlers.NewInvoiceHandler(db)
 
-	
 	go func() {
 		// Run every 24 hours
 		ticker := time.NewTicker(24 * time.Hour)
@@ -94,23 +93,22 @@ func main() {
 	// API routes
 	api := r.Group("/api")
 	{
-	// Auth
+		// Auth
 		authHandler := handlers.NewAuthHandler(db)
 		oauthHandler := handlers.NewOAuthHandler(db)
 		auth := api.Group("/auth")
 		{
 			auth.POST("/register", authHandler.Register)
+			auth.POST("/request-otp", authHandler.RequestOTP)
+			auth.POST("/verify-otp", authHandler.VerifyOTP)
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/forgot-password", authHandler.ForgotPassword)
 			auth.POST("/reset-password", authHandler.ResetPassword)
-			auth.POST("/verify-email", authHandler.VerifyEmail)
-			auth.POST("/resend-verification", authHandler.ResendVerification)
-			
+
 			// Google OAuth
 			auth.GET("/google", oauthHandler.GoogleLogin)
 			auth.GET("/google/callback", oauthHandler.GoogleCallback)
 		}
-
 
 		// Public reads
 		catHandler := handlers.NewCategoryHandler(db)
@@ -127,6 +125,7 @@ func main() {
 		chatHandler := handlers.NewChatHandler(db, emailService)
 		chatTemplateHandler := handlers.NewChatTemplateHandler(db)
 		autoReplyHandler := handlers.NewAutoReplyHandler(db)
+		archiveHandler := handlers.NewArchiveHandler(db)
 
 		api.GET("/categories", catHandler.List)
 		api.GET("/halls", hallHandler.List)
@@ -149,6 +148,9 @@ func main() {
 		{
 			admin.GET("/users", userHandler.List)
 			admin.POST("/users", userHandler.Create)
+			admin.GET("/users-permissions", userHandler.GetAllPermissions)
+			admin.GET("/users/:id/permissions", userHandler.GetPermissions)
+			admin.PUT("/users/:id/permissions", userHandler.UpdatePermissions)
 			admin.GET("/users/:id", userHandler.Get)
 			admin.PUT("/users/:id", userHandler.Update)
 			admin.DELETE("/users/:id", userHandler.Delete)
@@ -194,6 +196,11 @@ func main() {
 			// Auto-reply configuration (admin only)
 			admin.GET("/chat/auto-reply", autoReplyHandler.GetAutoReplyConfig)
 			admin.PUT("/chat/auto-reply", autoReplyHandler.UpdateAutoReplyConfig)
+
+			// Archive System
+			admin.GET("/archive/:entity", archiveHandler.GetArchived)
+			admin.POST("/archive/:entity/:id/restore", archiveHandler.Restore)
+			admin.DELETE("/archive/:entity/:id/permanent", archiveHandler.DeletePermanent)
 		}
 
 		// Authenticated routes (admin and customer)
@@ -210,6 +217,7 @@ func main() {
 			// Bookings
 			secure.POST("/bookings", bookingHandler.Create)
 			secure.PUT("/bookings/:id", bookingHandler.Update)
+			secure.PUT("/bookings/:id/cancel", bookingHandler.Cancel)
 			secure.DELETE("/bookings/:id", bookingHandler.Delete)
 
 			// Favorites
@@ -248,7 +256,11 @@ func main() {
 		api.GET("/chat/bookings/:booking_id/ws", chatHandler.HandleWebSocket)
 	}
 
-	addr := ":8080"
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	addr := ":" + port
 
 	// Create HTTP server with increased timeouts for file uploads
 	srv := &http.Server{

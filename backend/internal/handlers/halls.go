@@ -138,6 +138,22 @@ func (h *HallHandler) Delete(c *gin.Context) {
 		return
 	}
 	
+	// Update DeletedBy before soft deleting
+	if id, exists := c.Get("userId"); exists {
+		var uid uint
+		switch v := id.(type) {
+		case float64:
+			uid = uint(v)
+		case uint:
+			uid = v
+		case int:
+			uid = uint(v)
+		}
+		if uid > 0 {
+			h.db.Model(&models.EventHall{}).Where("id = ?", hallID).Update("deleted_by", uid)
+		}
+	}
+
 	// Attempt to delete the hall
 	if err := h.db.Delete(&models.EventHall{}, hallID).Error; err != nil {
 		// Check if it's a foreign key constraint error

@@ -1,13 +1,18 @@
 package models
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 type BookingStatus string
 
 const (
-	BookingStatusPending  BookingStatus = "pending"
-	BookingStatusApproved BookingStatus = "approved"
-	BookingStatusRejected BookingStatus = "rejected"
+	BookingStatusPending   BookingStatus = "pending"
+	BookingStatusApproved  BookingStatus = "approved"
+	BookingStatusRejected  BookingStatus = "rejected"
+	BookingStatusCancelled BookingStatus = "cancelled"
 )
 
 type BookingType string
@@ -33,8 +38,10 @@ type Booking struct {
 	ReferenceNumber string        `gorm:"type:varchar(50);uniqueIndex" json:"reference_number"` // Unique booking reference
 	Status          BookingStatus `gorm:"type:varchar(20);default:pending" json:"status"`
 	BookingType     BookingType   `gorm:"type:varchar(20);default:custom" json:"booking_type"`
-	CreatedAt       time.Time     `gorm:"autoCreateTime" json:"created_at"`
-	AdminNotes      *string       `gorm:"type:text" json:"admin_notes"`
+	CreatedAt       time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	DeletedAt       gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+	DeletedBy       *uint          `json:"deleted_by,omitempty"`
+	AdminNotes      *string        `gorm:"type:text" json:"admin_notes"`
 
 	// Relations
 	User          User          `gorm:"foreignKey:UserID" json:"user"`

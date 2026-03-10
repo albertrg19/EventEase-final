@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -33,7 +34,8 @@ func (h *UserHandler) logActivity(c *gin.Context, action, resource string, resou
 func (h *UserHandler) List(c *gin.Context) {
 	var items []models.User
 	page, size := getPagination(c)
-	if err := h.db.Order("id desc").Limit(size).Offset((page - 1) * size).Find(&items).Error; err != nil {
+	// Show all admin/staff users, but only show customers who verified email or phone
+	if err := h.db.Where("role = 'admin' OR email_verified = ? OR phone_verified = ?", true, true).Order("id desc").Limit(size).Offset((page - 1) * size).Find(&items).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list"})
 		return
 	}
@@ -303,10 +305,112 @@ func (h *UserHandler) Delete(c *gin.Context) {
 	userID := user.ID
 	userName := user.Name
 	userEmail := user.Email
+	// Update DeletedBy before soft deleting
+	if id, exists := c.Get("userId"); exists {
+		var uid uint
+		switch v := id.(type) {
+		case float64:
+			uid = uint(v)
+		case uint:
+			uid = v
+		case int:
+			uid = uint(v)
+		}
+		if uid > 0 {
+			h.db.Model(&models.User{}).Where("id = ?", userID).Update("deleted_by", uid)
+		}
+	}
+
 	if err := h.db.Delete(&models.User{}, userID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed"})
 		return
 	}
 	h.logActivity(c, "delete", "user", &userID, fmt.Sprintf("Deleted user: %s (%s)", userName, userEmail))
 	c.Status(http.StatusNoContent)
+}
+
+// ── Per-user module permission endpoints ──
+
+func (h *UserHandler) GetPermissions(c *gin.Context) {
+	var user models.User
+	if err := h.db.First(&user, c.Param("id")).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	// Return the raw JSON string (or null)
+	if user.Permissions != nil {
+		c.Data(http.StatusOK, "application/json", []byte(*user.Permissions))
+	} else {
+		c.Data(http.StatusOK, "application/json", []byte("null"))
+	}
+}
+
+type permissionsUpdate struct {
+	Permissions []string `json:"permissions"`
+}
+
+func (h *UserHandler) UpdatePermissions(c *gin.Context) {
+	var target models.User
+	if err := h.db.First(&target, c.Param("id")).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+
+	// Prevent modifying super admin permissions
+	superEmail := os.Getenv("SUPER_ADMIN_EMAIL")
+	if superEmail == "" {
+		superEmail = "superadmin@gmail.com"
+	}
+	if target.Email == superEmail {
+		c.JSON(http.StatusForbidden, gin.H{"error": "cannot modify super admin permissions"})
+		return
+	}
+
+	var req permissionsUpdate
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Serialize to JSON and save
+	raw := fmt.Sprintf(`["%s"]`, "")
+	if len(req.Permissions) > 0 {
+		parts := ""
+		for i, p := range req.Permissions {
+			if i > 0 {
+				parts += ","
+			}
+			parts += fmt.Sprintf(`"%s"`, p)
+		}
+		raw = fmt.Sprintf(`[%s]`, parts)
+	} else {
+		raw = `[]`
+	}
+	target.Permissions = &raw
+
+	if err := h.db.Save(&target).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "update failed"})
+		return
+	}
+	h.logActivity(c, "update", "user_permissions", &target.ID, fmt.Sprintf("Updated permissions for %s (%s)", target.Name, target.Email))
+	c.JSON(http.StatusOK, gin.H{"permissions": req.Permissions})
+}
+
+// GetAllPermissions returns a map of userId -> permissions for all admin users
+func (h *UserHandler) GetAllPermissions(c *gin.Context) {
+	var admins []models.User
+	if err := h.db.Where("role = ?", "admin").Find(&admins).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch admins"})
+		return
+	}
+	result := make(map[string]interface{})
+	for _, admin := range admins {
+		idStr := fmt.Sprintf("%d", admin.ID)
+		if admin.Permissions != nil {
+			result[idStr] = json.RawMessage(*admin.Permissions)
+		} else {
+			result[idStr] = nil
+		}
+	}
+	c.JSON(http.StatusOK, result)
 }

@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 type Review struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
@@ -9,8 +13,9 @@ type Review struct {
 	BookingID uint      `gorm:"not null;index" json:"booking_id"`
 	Rating    int       `gorm:"not null;check:rating >= 1 AND rating <= 5" json:"rating"`
 	Comment   string    `gorm:"type:text" json:"comment"`
-	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	CreatedAt time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
 
 	// Relations
 	User    User      `gorm:"foreignKey:UserID" json:"user,omitempty"`

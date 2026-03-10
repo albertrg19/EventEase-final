@@ -19,17 +19,21 @@ func LoadEnv() {
 func Connect() (*gorm.DB, error) {
 	LoadEnv()
 
-	host := os.Getenv("DB_HOST")
-	port := os.Getenv("DB_PORT")
-	user := os.Getenv("DB_USER")
-	password := os.Getenv("DB_PASSWORD")
-	dbname := os.Getenv("DB_NAME")
-	sslmode := os.Getenv("DB_SSLMODE")
-	if sslmode == "" {
-		sslmode = "disable"
-	}
+	// Prefer a full DATABASE_URL (e.g. Railway / Supabase), fall back to discrete vars for local dev
+	dsn := os.Getenv("postgresql://postgres:jWQUbnENxHXhyRSeAAgbgsBRJubRtINz@switchback.proxy.rlwy.net:36441/railway")
+	if dsn == "" {
+		host := os.Getenv("DB_HOST")
+		port := os.Getenv("DB_PORT")
+		user := os.Getenv("DB_USER")
+		password := os.Getenv("DB_PASSWORD")
+		dbname := os.Getenv("DB_NAME")
+		sslmode := os.Getenv("DB_SSLMODE")
+		if sslmode == "" {
+			sslmode = "disable"
+		}
 
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=UTC", host, user, password, dbname, port, sslmode)
+		dsn = fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=UTC", host, user, password, dbname, port, sslmode)
+	}
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
@@ -40,5 +44,3 @@ func Connect() (*gorm.DB, error) {
 	log.Println("database connected")
 	return db, nil
 }
-
-

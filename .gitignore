@@ -43,3 +43,5 @@ next-env.d.ts
 # backend
 *.exe
 backend/uploads/
+backend/console.log
+backend/sms_debug.log
