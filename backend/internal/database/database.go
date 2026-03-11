@@ -20,7 +20,7 @@ func Connect() (*gorm.DB, error) {
 	LoadEnv()
 
 	// Prefer a full DATABASE_URL (e.g. Railway / Supabase), fall back to discrete vars for local dev
-	dsn := os.Getenv("postgresql://postgres:jWQUbnENxHXhyRSeAAgbgsBRJubRtINz@switchback.proxy.rlwy.net:36441/railway")
+	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		host := os.Getenv("DB_HOST")
 		port := os.Getenv("DB_PORT")
