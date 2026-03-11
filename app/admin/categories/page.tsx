@@ -14,6 +14,18 @@ interface Category {
   image?: string;
 }
 
+const stripApiPath = (apiUrl: string) => {
+  try {
+    const parsed = new URL(apiUrl);
+    parsed.pathname = '';
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.origin;
+  } catch {
+    return apiUrl.replace(/\/api\b.*$/, '');
+  }
+};
+
 export default function CategoryManagementPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
