@@ -1,6 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { gsap } from 'gsap';
+import { useGSAP } from '@gsap/react';
+import { ScrollTrigger } from 'gsap/ScrollTrigger';
+
+gsap.registerPlugin(useGSAP, ScrollTrigger);
 import Link from 'next/link';
 import { Building2, Calendar, Check, Eye, Users, Phone, Mail, Clock, Facebook, Twitter, Instagram, Linkedin, ChevronUp, Star, ArrowRight, Sparkles, MapPin, Zap, Search, FileCheck, PartyPopper } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -10,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 export default function Home() {
   const [scrolled, setScrolled] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
-  const [visibleSections, setVisibleSections] = useState<Set<string>>(new Set());
+  const container = useRef<HTMLDivElement>(null);
   const api = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
   type Hall = {
@@ -61,27 +66,54 @@ export default function Home() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  useEffect(() => {
-    const observerOptions = {
-      threshold: 0.1,
-      rootMargin: '0px 0px -100px 0px',
-    };
+  useGSAP(() => {
+    // Hero Animations
+    gsap.from('.hero-headline', { y: 50, opacity: 0, duration: 1, delay: 0.2, ease: 'power3.out' });
+    gsap.from('.hero-subheadline', { y: 30, opacity: 0, duration: 1, delay: 0.4, ease: 'power3.out' });
+    gsap.from('.hero-buttons', { y: 20, opacity: 0, duration: 1, delay: 0.6, ease: 'power3.out' });
+    gsap.from('.stat-item', { scale: 0.8, opacity: 0, duration: 0.8, stagger: 0.2, delay: 0.8, ease: 'back.out(1.7)' });
 
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          setVisibleSections((prev) => new Set(prev).add(entry.target.id));
-        }
+    // Section Titles
+    gsap.utils.toArray('.section-title').forEach((title: any) => {
+      gsap.from(title, {
+        scrollTrigger: {
+          trigger: title,
+          start: 'top bottom-=100',
+          toggleActions: 'play none none reverse'
+        },
+        y: 40, opacity: 0, duration: 0.8, ease: 'power3.out'
       });
-    }, observerOptions);
+    });
 
-    const sections = document.querySelectorAll('[data-section]');
-    sections.forEach((section) => observer.observe(section));
+    // Cards & Items
+    gsap.utils.toArray('.venue-card').forEach((card: any, i) => {
+      gsap.from(card, {
+        scrollTrigger: { trigger: card, start: 'top bottom-=50', toggleActions: 'play none none reverse' },
+        y: 50, opacity: 0, duration: 0.8, delay: i * 0.1, ease: 'power3.out'
+      });
+    });
 
-    return () => {
-      sections.forEach((section) => observer.unobserve(section));
-    };
-  }, []);
+    gsap.utils.toArray('.category-card').forEach((card: any, i) => {
+      gsap.from(card, {
+        scrollTrigger: { trigger: card, start: 'top bottom-=50', toggleActions: 'play none none reverse' },
+        y: 50, opacity: 0, duration: 0.8, delay: i * 0.1, ease: 'power3.out'
+      });
+    });
+
+    gsap.utils.toArray('.step-card').forEach((card: any, i) => {
+      gsap.from(card, {
+        scrollTrigger: { trigger: card, start: 'top bottom-=50', toggleActions: 'play none none reverse' },
+        y: 50, opacity: 0, duration: 0.6, delay: i * 0.15, ease: 'back.out(1.5)'
+      });
+    });
+
+    gsap.utils.toArray('.gallery-item').forEach((item: any, i) => {
+      gsap.from(item, {
+        scrollTrigger: { trigger: item, start: 'top bottom-=50', toggleActions: 'play none none reverse' },
+        scale: 0.8, opacity: 0, duration: 0.6, delay: (i % 4) * 0.1, ease: 'power2.out'
+      });
+    });
+  }, { scope: container });
 
   const scrollToTop = () => window.scrollTo({ top: 0, behavior: 'smooth' });
 
@@ -279,7 +311,7 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-white" ref={container}>
       {/* Header */}
       <header className={`fixed top-0 w-full z-50 transition-all duration-500 ${scrolled ? 'bg-blue-950/98 backdrop-blur-xl shadow-2xl py-3' : 'bg-transparent py-4'}`}>
         <nav className="container mx-auto px-4 md:px-6 flex items-center justify-between">
@@ -328,20 +360,20 @@ export default function Home() {
         <div className="absolute bottom-20 right-10 w-96 h-96 bg-blue-400/10 rounded-full blur-3xl animate-float-delayed"></div>
 
         <div className="relative z-10 container mx-auto text-center max-w-5xl">
-          <div className="mb-6 inline-flex items-center gap-2 px-4 py-2 bg-yellow-400/10 backdrop-blur-sm border border-yellow-400/20 rounded-full text-yellow-400 text-sm font-semibold animate-fade-in">
+          <div className="mb-6 inline-flex items-center gap-2 px-4 py-2 bg-yellow-400/10 backdrop-blur-sm border border-yellow-400/20 rounded-full text-yellow-400 text-sm font-semibold hero-headline">
             <Sparkles className="h-4 w-4" />
             Premium Event Venues
           </div>
 
-          <h1 className="text-5xl md:text-7xl lg:text-8xl font-extrabold mb-8 text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-yellow-300 to-yellow-400 animate-gradient leading-tight">
+          <h1 className="text-5xl md:text-7xl lg:text-8xl font-extrabold mb-8 text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-yellow-300 to-yellow-400 hero-headline leading-tight">
             Your Perfect Event Venue Awaits
           </h1>
 
-          <p className="text-xl md:text-2xl text-white/90 mb-12 max-w-3xl mx-auto leading-relaxed drop-shadow-lg animate-fade-in-delayed">
+          <p className="text-xl md:text-2xl text-white/90 mb-12 max-w-3xl mx-auto leading-relaxed drop-shadow-lg hero-subheadline">
             Experience exceptional event venues at Coliseum EventEase. From intimate gatherings to grand celebrations, we make every occasion memorable.
           </p>
 
-          <div className="flex flex-col sm:flex-row gap-5 justify-center items-center animate-fade-in-delayed-2">
+          <div className="flex flex-col sm:flex-row gap-5 justify-center items-center hero-buttons">
             <Link href="/login" className="group">
               <Button size="lg" className="bg-gradient-to-r from-yellow-400 to-yellow-500 hover:from-yellow-500 hover:to-yellow-600 text-blue-950 px-10 py-7 text-lg font-bold shadow-2xl hover:shadow-yellow-400/50 transition-all duration-300 transform hover:scale-105 group">
                 <Calendar className="mr-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
@@ -358,16 +390,16 @@ export default function Home() {
           </div>
 
           {/* Stats Bar */}
-          <div className="mt-20 grid grid-cols-3 gap-8 max-w-3xl mx-auto pt-12 border-t border-white/10 animate-fade-in-delayed-3">
-            <div className="text-center">
+          <div className="mt-20 grid grid-cols-3 gap-8 max-w-3xl mx-auto pt-12 border-t border-white/10">
+            <div className="text-center stat-item">
               <div className="text-4xl md:text-5xl font-bold text-yellow-400 mb-2">500+</div>
               <div className="text-white/70 text-sm uppercase tracking-wider">Events Hosted</div>
             </div>
-            <div className="text-center">
+            <div className="text-center stat-item">
               <div className="text-4xl md:text-5xl font-bold text-yellow-400 mb-2">98%</div>
               <div className="text-white/70 text-sm uppercase tracking-wider">Satisfaction</div>
             </div>
-            <div className="text-center">
+            <div className="text-center stat-item">
               <div className="text-4xl md:text-5xl font-bold text-yellow-400 mb-2">10+</div>
               <div className="text-white/70 text-sm uppercase tracking-wider">Premium Venues</div>
             </div>
@@ -393,7 +425,7 @@ export default function Home() {
         ></div>
 
         <div className="container mx-auto relative z-10">
-          <div className={`text-center mb-20 transition-all duration-1000 ${visibleSections.has('venues') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}>
+          <div className="text-center mb-20 section-title">
             <div className="inline-flex items-center gap-2 mb-4 px-5 py-2 bg-gradient-to-r from-yellow-400 to-yellow-500 text-blue-950 text-xs font-bold uppercase tracking-wider rounded-full shadow-lg">
               <Star className="h-3 w-3 fill-blue-950" />
               Premium Venues
@@ -439,8 +471,7 @@ export default function Home() {
               halls.map((hall: any, i: number) => (
                 <Card
                   key={hall.id ?? `hall-${i}`}
-                  className={`overflow-hidden group cursor-pointer border-0 bg-transparent rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-500 transform hover:-translate-y-1 flex flex-col h-full ${visibleSections.has('venues') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
-                    }`}
+                  className="overflow-hidden group cursor-pointer border-0 bg-transparent rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-500 transform hover:-translate-y-1 flex flex-col h-full venue-card"
                   style={{ transitionDelay: `${i * 150}ms` }}
                 >
                   {/* Image Section - Fixed Height */}
@@ -537,7 +568,7 @@ export default function Home() {
         ></div>
 
         <div className="container mx-auto relative z-10">
-          <div className={`text-center mb-20 transition-all duration-1000 ${visibleSections.has('categories') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}>
+          <div className="text-center mb-20 section-title">
             <div className="inline-flex items-center gap-2 mb-4 px-5 py-2 bg-gradient-to-r from-yellow-400 to-yellow-500 text-blue-950 text-xs font-bold uppercase tracking-wider rounded-full shadow-lg">
               <Sparkles className="h-3 w-3 fill-blue-950" />
               Event Types
@@ -577,8 +608,7 @@ export default function Home() {
               categories.map((category: any, i: number) => (
                 <Card
                   key={category.id ?? `category-${i}`}
-                  className={`overflow-hidden group cursor-pointer border-0 bg-transparent rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-500 transform hover:-translate-y-1 flex flex-col h-full ${visibleSections.has('categories') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
-                    }`}
+                  className="overflow-hidden group cursor-pointer border-0 bg-transparent rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-500 transform hover:-translate-y-1 flex flex-col h-full category-card"
                   style={{ transitionDelay: `${i * 100}ms` }}
                 >
                   {/* Image Section - Fixed Height */}
@@ -664,7 +694,7 @@ export default function Home() {
         </div>
 
         <div className="container mx-auto max-w-6xl relative z-10">
-          <div className={`text-center mb-16 transition-all duration-1000 ${visibleSections.has('availability') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}>
+          <div className="text-center mb-16 section-title">
             <div className="inline-flex items-center gap-2 mb-4 px-5 py-2 bg-gradient-to-r from-yellow-400 to-orange-500 text-white text-xs font-bold uppercase tracking-wider rounded-full shadow-lg hover:shadow-xl transition-shadow">
               <Calendar className="h-3 w-3 animate-pulse" />
               Plan Ahead
@@ -677,8 +707,7 @@ export default function Home() {
             </p>
           </div>
 
-          <Card className={`border-0 bg-white shadow-2xl hover:shadow-3xl overflow-hidden transition-all duration-1000 rounded-3xl ${visibleSections.has('availability') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
-            }`}>
+          <Card className="border-0 bg-white shadow-2xl hover:shadow-3xl overflow-hidden transition-all duration-1000 rounded-3xl venue-card">
             {/* Premium Header - Brand Colors */}
             <div className="relative overflow-hidden">
               {/* Blue gradient background */}
@@ -883,7 +912,7 @@ export default function Home() {
       {/* How It Works Section */}
       <section id="how-it-works" data-section className="py-24 px-4 bg-gradient-to-b from-gray-50 to-white relative overflow-hidden">
         <div className="container mx-auto relative z-10">
-          <div className={`text-center mb-20 transition-all duration-1000 ${visibleSections.has('how-it-works') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}>
+          <div className="text-center mb-20 section-title">
             <div className="inline-flex items-center gap-2 mb-4 px-5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-xs font-bold uppercase tracking-wider rounded-full shadow-lg">
               <Zap className="h-3 w-3" />
               Simple Process
@@ -905,7 +934,7 @@ export default function Home() {
             ].map((step, i) => (
               <div
                 key={i}
-                className={`relative text-center transition-all duration-1000 ${visibleSections.has('how-it-works') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}
+                className="relative text-center transition-all duration-1000 step-card"
                 style={{ transitionDelay: `${i * 150}ms` }}
               >
                 {/* Connector Line */}
@@ -938,7 +967,7 @@ export default function Home() {
       {/* Gallery Showcase */}
       <section id="gallery" data-section className="py-24 px-4 bg-gradient-to-b from-white to-gray-50 relative overflow-hidden">
         <div className="container mx-auto relative z-10">
-          <div className={`text-center mb-20 transition-all duration-1000 ${visibleSections.has('gallery') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}>
+          <div className="text-center mb-20 section-title">
             <div className="inline-flex items-center gap-2 mb-4 px-5 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 text-white text-xs font-bold uppercase tracking-wider rounded-full shadow-lg">
               <Eye className="h-3 w-3" />
               Visual Gallery
@@ -955,7 +984,7 @@ export default function Home() {
             {Array.from({ length: 8 }).map((_, i) => (
               <div
                 key={i}
-                className={`group relative overflow-hidden rounded-2xl aspect-square shadow-lg hover:shadow-2xl transition-all duration-500 transform hover:scale-105 ${visibleSections.has('gallery') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}
+                className="group relative overflow-hidden rounded-2xl aspect-square shadow-lg hover:shadow-2xl transition-all duration-500 transform hover:scale-105 gallery-item"
                 style={{ transitionDelay: `${i * 50}ms` }}
               >
                 <div className={`w-full h-full bg-gradient-to-br ${

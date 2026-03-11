@@ -5,10 +5,12 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { 
   Home, Building2, Calendar, Receipt, Grid, Settings, LogOut, 
-  Bell, Search, Menu, X, User, Users, HelpCircle, CheckCircle2, Loader2
+  Bell, Search, Menu, X, User, Users, HelpCircle, CheckCircle2, Loader2, Trash2, Edit3, Save, AlertCircle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 
 interface UserData {
   id: number;
@@ -36,7 +38,7 @@ const ROLE_MATRIX_STORAGE_KEY = 'admin-role-matrix';
 const ROLE_ASSIGNMENTS_STORAGE_KEY = 'admin-role-assignments';
 
 const defaultRoleMatrix: Record<RoleKey, string[]> = {
-  superAdmin: ['dashboard', 'users', 'bookings', 'categories', 'halls', 'events', 'invoices', 'settings'],
+  superAdmin: ['dashboard', 'users', 'bookings', 'categories', 'halls', 'events', 'invoices', 'settings', 'archive'],
   manager: ['dashboard', 'bookings', 'halls', 'events', 'invoices', 'categories'],
   support: ['dashboard', 'bookings', 'categories'],
 };
@@ -59,6 +61,7 @@ const baseMenuItems: MenuItem[] = [
   { icon: Calendar, label: 'Event Management', href: '/admin/events', module: 'events' },
   { icon: Receipt, label: 'Invoice Management', href: '/admin/invoices', module: 'invoices' },
   { icon: Settings, label: 'Settings', href: '/admin/settings', module: 'settings' },
+  { icon: Trash2, label: 'Archive', href: '/admin/archive', module: 'archive' },
 ];
 
 const NotificationPanel = ({
@@ -162,6 +165,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [refreshingNotifications, setRefreshingNotifications] = useState(false);
   const [roleMatrix, setRoleMatrix] = useState(defaultRoleMatrix);
   const [roleAssignments, setRoleAssignments] = useState<RoleAssignments>({});
+  
+  // Profile Update State
+  const [profileDialogOpen, setProfileDialogOpen] = useState(false);
+  const [profileFormData, setProfileFormData] = useState({ name: '', email: '', phone: '', password: '' });
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileMessage, setProfileMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
   const api = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
   useEffect(() => {
@@ -315,6 +325,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             role: role || 'admin',
             phone: userData.phone || userData.Phone,
           });
+          setProfileFormData(prev => ({ 
+            ...prev, 
+            name: name || email || '', 
+            email: email || '',
+            phone: userData.phone || userData.Phone || ''
+          }));
         } else {
           console.warn('User data missing name/email:', userData);
           // Try to get from token as fallback
@@ -377,6 +393,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 role,
                 phone: userData.phone || userData.Phone,
               });
+              setProfileFormData(prev => ({ 
+                ...prev, 
+                name, 
+                email,
+                phone: userData.phone || userData.Phone || ''
+              }));
             } else {
               // Set default super admin data from token
               setUser({
@@ -524,6 +546,49 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: !n.read } : n)),
     );
+
+  const handleProfileSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProfileSaving(true);
+    setProfileMessage(null);
+    try {
+      const token = localStorage.getItem('token');
+      const payload: any = { 
+        name: profileFormData.name, 
+        email: profileFormData.email, 
+        phone: profileFormData.phone 
+      };
+      if (profileFormData.password) {
+        payload.password = profileFormData.password;
+      }
+      
+      const res = await fetch(`${api}/api/me`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      
+      if (res.ok) {
+        setProfileMessage({ text: 'Profile updated successfully!', type: 'success' });
+        fetchUserProfile(); // Refresh data
+        setTimeout(() => {
+          setProfileDialogOpen(false);
+          setProfileFormData(prev => ({ ...prev, password: '' }));
+          setProfileMessage(null);
+        }, 2000);
+      } else {
+        const errorData = await res.json().catch(() => ({}));
+        setProfileMessage({ text: errorData.error || 'Failed to update profile', type: 'error' });
+      }
+    } catch (err) {
+      setProfileMessage({ text: 'Network error occurred.', type: 'error' });
+    } finally {
+      setProfileSaving(false);
+    }
+  };
 
   const superAdminEmail = 'superadmin@gmail.com';
 
@@ -708,6 +773,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                       </span>
                     )}
                   </button>
+                  <button
+                    className="p-2.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all"
+                    title="Edit Profile"
+                    onClick={() => setProfileDialogOpen(true)}
+                  >
+                    <Edit3 className="h-5 w-5" />
+                  </button>
                   <Link href="/admin/settings">
                     <button
                       className="p-2.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all"
@@ -743,6 +815,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                         {unreadCount}
                       </span>
                     )}
+                  </button>
+                  <button
+                    className="p-2.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all"
+                    title="Edit Profile"
+                    onClick={() => setProfileDialogOpen(true)}
+                  >
+                    <Edit3 className="h-4 w-4" />
                   </button>
                   <Link href="/admin/settings">
                     <button
@@ -789,6 +868,88 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         toggleRead={toggleNotificationRead}
         refreshing={refreshingNotifications}
       />
+
+      {/* Admin Profile Update Dialog */}
+      <Dialog open={profileDialogOpen} onOpenChange={open => {
+        setProfileDialogOpen(open);
+        if (!open) {
+          setProfileFormData(prev => ({...prev, password: ''}));
+          setProfileMessage(null);
+        }
+      }}>
+        <DialogContent className="sm:max-w-md border-0 shadow-2xl rounded-2xl">
+          <DialogHeader className="bg-gradient-to-r from-blue-600 to-blue-800 text-white p-6 rounded-t-2xl -mx-6 -mt-6 mb-6">
+            <DialogTitle className="text-xl font-bold flex items-center gap-2">
+              <User className="h-5 w-5" />
+              Update Profile
+            </DialogTitle>
+          </DialogHeader>
+
+          {profileMessage && (
+            <div className={`p-3 rounded-lg text-sm font-medium mb-4 flex items-center gap-2 ${
+              profileMessage.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
+            }`}>
+              {profileMessage.type === 'success' ? <CheckCircle2 className="h-4 w-4"/> : <AlertCircle className="h-4 w-4"/>}
+              {profileMessage.text}
+            </div>
+          )}
+
+          <form onSubmit={handleProfileSave} className="space-y-4 px-2 pb-2">
+            <div className="space-y-2">
+              <Label htmlFor="name" className="text-gray-700 font-semibold text-sm">Full Name</Label>
+              <Input
+                id="name"
+                value={profileFormData.name}
+                onChange={e => setProfileFormData({...profileFormData, name: e.target.value})}
+                className="bg-gray-50 border-gray-300 focus-visible:ring-blue-500 rounded-lg"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="email" className="text-gray-700 font-semibold text-sm">Email Address</Label>
+              <Input
+                id="email"
+                type="email"
+                value={profileFormData.email}
+                onChange={e => setProfileFormData({...profileFormData, email: e.target.value})}
+                className="bg-gray-50 border-gray-300 focus-visible:ring-blue-500 rounded-lg"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="phone" className="text-gray-700 font-semibold text-sm">Phone Number</Label>
+              <Input
+                id="phone"
+                value={profileFormData.phone}
+                onChange={e => setProfileFormData({...profileFormData, phone: e.target.value})}
+                className="bg-gray-50 border-gray-300 focus-visible:ring-blue-500 rounded-lg"
+              />
+            </div>
+            <div className="space-y-2 pt-2 border-t border-gray-100">
+              <Label htmlFor="password" className="text-gray-700 font-semibold text-sm">New Password (Optional)</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="Leave blank to keep current"
+                value={profileFormData.password}
+                onChange={e => setProfileFormData({...profileFormData, password: e.target.value})}
+                className="bg-gray-50 border-gray-300 focus-visible:ring-blue-500 rounded-lg"
+              />
+              <p className="text-xs text-gray-500 pt-1">Provide a new password only if you wish to change it.</p>
+            </div>
+
+            <div className="pt-4 flex justify-end gap-3">
+              <Button type="button" variant="ghost" onClick={() => setProfileDialogOpen(false)} className="rounded-xl">
+                Cancel
+              </Button>
+              <Button type="submit" disabled={profileSaving} className="bg-blue-600 hover:bg-blue-700 shadow-md rounded-xl">
+                {profileSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+                Save Changes
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

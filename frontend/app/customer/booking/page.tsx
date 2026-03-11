@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Calendar, Plus, User, Tag, List, Building2, Check, ChevronLeft, ChevronRight, Loader2, AlertCircle, X, CheckCircle2, Clock } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { format, isSameDay, isSameMonth, startOfMonth, endOfMonth, eachDayOfInterval, getDay } from 'date-fns';
+import 'intro.js/introjs.css';
 
 interface Category {
   ID: number;
@@ -66,6 +67,7 @@ export default function NewBookingPage() {
     end_hour: '05',
     end_minute: '00',
     end_period: 'PM',
+    booking_type: 'custom',
   });
   const [currentHallIndex, setCurrentHallIndex] = useState(0);
   const api = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
@@ -84,6 +86,51 @@ export default function NewBookingPage() {
     // Reset carousel index when available halls change
     setCurrentHallIndex(0);
   }, [selectedDate, halls]);
+
+  useEffect(() => {
+    // Auto-start tour on first visit if data is loaded
+    const hasSeenTour = localStorage.getItem('hasSeenCalendarTour_v2');
+    if (!hasSeenTour && !fetchingData && !loading) {
+      const timer = setTimeout(() => startTour(), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [fetchingData, loading]);
+
+  const startTour = async () => {
+    const introJsMod = await import('intro.js');
+    const introJs = introJsMod.default || introJsMod;
+    const tour = (typeof introJs === 'function' ? introJs() : (introJs as any).introJs());
+
+    tour.setOptions({
+      steps: [
+        {
+          element: '#calendar-header',
+          intro: 'Welcome to the Event Booking Calendar! This is where you can view availability and schedule your events.',
+          position: 'bottom'
+        },
+        {
+          element: '#calendar-grid',
+          intro: 'Here you can navigate through months and see a high-level view of all bookings.',
+          position: 'top'
+        },
+        {
+          element: '#calendar-days',
+          intro: 'Click on any available future date to start a new booking request. Colored dots indicate existing bookings for that day.',
+          position: 'top'
+        }
+      ],
+      showProgress: true,
+      showBullets: false,
+      exitOnOverlayClick: false,
+      exitOnEsc: false,
+      doneLabel: 'Got it!'
+    });
+
+    tour.onexit(() => localStorage.setItem('hasSeenCalendarTour_v2', 'true'));
+    tour.oncomplete(() => localStorage.setItem('hasSeenCalendarTour_v2', 'true'));
+    
+    tour.start();
+  };
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Math.random().toString(36).substr(2, 9);
@@ -280,9 +327,20 @@ export default function NewBookingPage() {
         return;
       }
 
-      // Convert 12-hour format to 24-hour format
-      const startTime24 = formatTimeTo24Hour(formData.start_hour, formData.start_minute, formData.start_period);
-      const endTime24 = formatTimeTo24Hour(formData.end_hour, formData.end_minute, formData.end_period);
+      // Create proper Date objects for backend
+      const startHour24 = to24Hour(formData.start_hour, formData.start_period);
+      const startTime = new Date(selectedDate);
+      startTime.setHours(startHour24, parseInt(formData.start_minute), 0, 0);
+
+      const endHour24 = to24Hour(formData.end_hour, formData.end_period);
+      const endTime = new Date(selectedDate);
+      endTime.setHours(endHour24, parseInt(formData.end_minute), 0, 0);
+
+      if (endTime <= startTime) {
+        showToast('End time must be after start time', 'error');
+        setLoading(false);
+        return;
+      }
 
       const res = await fetch(`${api}/api/bookings`, {
         method: 'POST',
@@ -297,8 +355,9 @@ export default function NewBookingPage() {
           event_category_id: formData.event_category_id,
           hall_id: formData.hall_id,
           event_date: format(selectedDate, 'yyyy-MM-dd'),
-          start_time: startTime24,
-          end_time: endTime24,
+          start_time: startTime.toISOString(),
+          end_time: endTime.toISOString(),
+          booking_type: formData.booking_type,
         }),
       });
 
@@ -319,6 +378,7 @@ export default function NewBookingPage() {
           end_hour: '05',
           end_minute: '00',
           end_period: 'PM',
+          booking_type: 'custom',
         });
         setSelectedDate(null);
         setFormErrors({});
@@ -424,7 +484,7 @@ export default function NewBookingPage() {
       </div>
 
       {/* Header */}
-      <div className="mb-8">
+      <div id="calendar-header" className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-4 mb-3">
           <div className="w-14 h-14 bg-gradient-to-br from-blue-600 to-blue-700 rounded-2xl flex items-center justify-center shadow-lg ring-4 ring-blue-100">
             <Calendar className="h-7 w-7 text-white" />
@@ -439,11 +499,21 @@ export default function NewBookingPage() {
             </p>
           </div>
         </div>
+        
+        <Button 
+          onClick={startTour}
+          variant="outline" 
+          className="shrink-0 border-blue-200 text-blue-700 hover:bg-blue-50"
+        >
+          <AlertCircle className="w-4 h-4 mr-2" />
+          How to Book
+        </Button>
       </div>
 
       {/* Calendar */}
-      <Card className="shadow-2xl border-0 bg-white/80 backdrop-blur-sm rounded-2xl overflow-hidden">
-        <CardContent className="p-6 md:p-8">
+      <div id="calendar-grid">
+        <Card className="shadow-2xl border-0 bg-white/80 backdrop-blur-sm rounded-2xl overflow-hidden">
+          <CardContent className="p-6 md:p-8">
           {/* Calendar Navigation */}
           <div className="flex flex-col md:flex-row items-center justify-between gap-4 mb-8 pb-6 border-b-2 border-gray-200">
             <div className="flex items-center gap-3">
@@ -494,7 +564,7 @@ export default function NewBookingPage() {
             </div>
           ) : (
             /* Calendar Grid */
-            <div className="grid grid-cols-7 gap-3">
+            <div id="calendar-days" className="grid grid-cols-7 gap-3">
               {/* Day Headers */}
               {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
                 <div key={day} className="text-center font-bold text-blue-700 py-3 text-sm uppercase tracking-wider">
@@ -552,6 +622,7 @@ export default function NewBookingPage() {
           )}
         </CardContent>
       </Card>
+      </div>
 
       {/* New Event Booking Dialog */}
       <Dialog open={dialogOpen} onOpenChange={(open: boolean) => {
@@ -615,9 +686,41 @@ export default function NewBookingPage() {
 
                     {/* Time Selection */}
                     <div className="bg-white border-2 border-gray-300 rounded-lg p-3">
-                      <div className="flex items-center gap-1.5 mb-3">
-                        <Clock className="h-4 w-4 text-blue-600" />
-                        <p className="text-sm font-bold text-gray-800">Event Time</p>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-3 gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <Clock className="h-4 w-4 text-blue-600" />
+                          <p className="text-sm font-bold text-gray-800">Event Time</p>
+                        </div>
+                        {/* Quick Action Marks */}
+                        <div className="flex flex-wrap gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFormData({ ...formData, start_hour: '08', start_minute: '00', start_period: 'AM', end_hour: '12', end_minute: '00', end_period: 'PM', booking_type: 'half_day_am' });
+                            }}
+                            className={`text-[10px] sm:text-xs px-2 py-1 rounded-full font-bold transition-colors ${formData.booking_type === 'half_day_am' ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'}`}
+                          >
+                            Morning
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFormData({ ...formData, start_hour: '01', start_minute: '00', start_period: 'PM', end_hour: '05', end_minute: '00', end_period: 'PM', booking_type: 'half_day_pm' });
+                            }}
+                            className={`text-[10px] sm:text-xs px-2 py-1 rounded-full font-bold transition-colors ${formData.booking_type === 'half_day_pm' ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'}`}
+                          >
+                            Afternoon
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFormData({ ...formData, start_hour: '08', start_minute: '00', start_period: 'AM', end_hour: '05', end_minute: '00', end_period: 'PM', booking_type: 'full_day' });
+                            }}
+                            className={`text-[10px] sm:text-xs px-2 py-1 rounded-full font-bold transition-colors ${formData.booking_type === 'full_day' ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'}`}
+                          >
+                            Whole Day
+                          </button>
+                        </div>
                       </div>
 
                       <div className="grid grid-cols-2 gap-4">
@@ -635,7 +738,7 @@ export default function NewBookingPage() {
                                     setFormErrors({ ...formErrors, start_time: '' });
                                   }
                                 }}
-                                className="h-10 w-16 border-2 border-gray-300 rounded-lg px-2 pr-6 text-sm font-medium text-center focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 appearance-none bg-white cursor-pointer"
+                                className="h-10 w-14 border-2 border-gray-300 rounded-lg px-1 text-sm font-medium text-center focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 appearance-none bg-white cursor-pointer"
                               >
                                 {Array.from({ length: 12 }, (_, i) => {
                                   const hour = String(i + 1).padStart(2, '0');
@@ -646,28 +749,28 @@ export default function NewBookingPage() {
                                   );
                                 })}
                               </select>
-                              <ChevronRight className="absolute right-1.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none rotate-90" />
+                              <ChevronRight className="absolute right-1 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none rotate-90" />
                             </div>
                             <span className="text-gray-700 font-bold">:</span>
-                            {/* Minute Dropdown */}
+                            {/* Minute Input */}
                             <div className="relative">
-                              <select
+                              <input
+                                type="text"
+                                maxLength={2}
                                 value={formData.start_minute}
                                 onChange={(e) => {
-                                  setFormData({ ...formData, start_minute: e.target.value });
-                                  if (formErrors.start_time) {
-                                    setFormErrors({ ...formErrors, start_time: '' });
-                                  }
+                                  const val = e.target.value.replace(/\D/g, '').slice(0, 2);
+                                  const num = parseInt(val);
+                                  const formatted = isNaN(num) || val === '' ? '00' : String(Math.min(59, Math.max(0, num))).padStart(2, '0');
+                                  setFormData({ ...formData, start_minute: val, booking_type: 'custom' });
                                 }}
-                                className="h-10 w-16 border-2 border-gray-300 rounded-lg px-2 pr-6 text-sm font-medium text-center focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 appearance-none bg-white cursor-pointer"
-                              >
-                                {['00', '15', '30', '45'].map((minute) => (
-                                  <option key={minute} value={minute}>
-                                    {minute}
-                                  </option>
-                                ))}
-                              </select>
-                              <ChevronRight className="absolute right-1.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none rotate-90" />
+                                onBlur={() => {
+                                  const num = parseInt(formData.start_minute);
+                                  const formatted = isNaN(num) || formData.start_minute === '' ? '00' : String(Math.min(59, Math.max(0, num))).padStart(2, '0');
+                                  setFormData({ ...formData, start_minute: formatted });
+                                }}
+                                className="h-10 w-12 border-2 border-gray-300 rounded-lg px-1 text-sm font-medium text-center focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 bg-white"
+                              />
                             </div>
                             {/* AM/PM Button */}
                             <button
@@ -679,7 +782,7 @@ export default function NewBookingPage() {
                                   setFormErrors({ ...formErrors, start_time: '' });
                                 }
                               }}
-                              className="h-10 w-14 bg-blue-950 hover:bg-blue-900 text-white font-bold rounded-lg flex items-center justify-center gap-1 transition-all shadow-sm"
+                              className="h-10 w-14 bg-blue-950 hover:bg-blue-900 text-white font-bold rounded-lg flex items-center justify-center gap-1 transition-all shadow-sm text-xs px-1"
                             >
                               {formData.start_period}
                               <ChevronRight className="h-3 w-3 rotate-90" />
@@ -701,7 +804,7 @@ export default function NewBookingPage() {
                                     setFormErrors({ ...formErrors, end_time: '' });
                                   }
                                 }}
-                                className="h-10 w-16 border-2 border-gray-300 rounded-lg px-2 pr-6 text-sm font-medium text-center focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 appearance-none bg-white cursor-pointer"
+                                className="h-10 w-14 border-2 border-gray-300 rounded-lg px-1 text-sm font-medium text-center focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 appearance-none bg-white cursor-pointer"
                               >
                                 {Array.from({ length: 12 }, (_, i) => {
                                   const hour = String(i + 1).padStart(2, '0');
@@ -712,28 +815,28 @@ export default function NewBookingPage() {
                                   );
                                 })}
                               </select>
-                              <ChevronRight className="absolute right-1.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none rotate-90" />
+                              <ChevronRight className="absolute right-1 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none rotate-90" />
                             </div>
                             <span className="text-gray-700 font-bold">:</span>
-                            {/* Minute Dropdown */}
+                            {/* Minute Input */}
                             <div className="relative">
-                              <select
+                              <input
+                                type="text"
+                                maxLength={2}
                                 value={formData.end_minute}
                                 onChange={(e) => {
-                                  setFormData({ ...formData, end_minute: e.target.value });
-                                  if (formErrors.end_time) {
-                                    setFormErrors({ ...formErrors, end_time: '' });
-                                  }
+                                  const val = e.target.value.replace(/\D/g, '').slice(0, 2);
+                                  const num = parseInt(val);
+                                  const formatted = isNaN(num) || val === '' ? '00' : String(Math.min(59, Math.max(0, num))).padStart(2, '0');
+                                  setFormData({ ...formData, end_minute: val, booking_type: 'custom' });
                                 }}
-                                className="h-10 w-16 border-2 border-gray-300 rounded-lg px-2 pr-6 text-sm font-medium text-center focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 appearance-none bg-white cursor-pointer"
-                              >
-                                {['00', '15', '30', '45'].map((minute) => (
-                                  <option key={minute} value={minute}>
-                                    {minute}
-                                  </option>
-                                ))}
-                              </select>
-                              <ChevronRight className="absolute right-1.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none rotate-90" />
+                                onBlur={() => {
+                                  const num = parseInt(formData.end_minute);
+                                  const formatted = isNaN(num) || formData.end_minute === '' ? '00' : String(Math.min(59, Math.max(0, num))).padStart(2, '0');
+                                  setFormData({ ...formData, end_minute: formatted });
+                                }}
+                                className="h-10 w-12 border-2 border-gray-300 rounded-lg px-1 text-sm font-medium text-center focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 bg-white"
+                              />
                             </div>
                             {/* AM/PM Button */}
                             <button
@@ -745,7 +848,7 @@ export default function NewBookingPage() {
                                   setFormErrors({ ...formErrors, end_time: '' });
                                 }
                               }}
-                              className="h-10 w-14 bg-blue-950 hover:bg-blue-900 text-white font-bold rounded-lg flex items-center justify-center gap-1 transition-all shadow-sm"
+                              className="h-10 w-14 bg-blue-950 hover:bg-blue-900 text-white font-bold rounded-lg flex items-center justify-center gap-1 transition-all shadow-sm text-xs px-1"
                             >
                               {formData.end_period}
                               <ChevronRight className="h-3 w-3 rotate-90" />
@@ -767,61 +870,63 @@ export default function NewBookingPage() {
                 )}
 
                 {/* Event Name */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-700">
-                    Event Name
-                  </label>
-                  <Input
-                    value={formData.event_name}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                      setFormData({ ...formData, event_name: e.target.value });
-                      if (formErrors.event_name) {
-                        setFormErrors({ ...formErrors, event_name: '' });
-                      }
-                    }}
-                    required
-                    placeholder="Event Name"
-                    className={`h-9 text-sm border-2 ${formErrors.event_name ? 'border-red-500' : 'border-gray-300'
-                      } focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 rounded-lg transition-all`}
-                  />
-                  {formErrors.event_name && (
-                    <p className="text-[10px] text-red-600 flex items-center gap-1">
-                      <AlertCircle className="h-2.5 w-2.5" />
-                      {formErrors.event_name}
-                    </p>
-                  )}
-                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-700">
+                      Event Name
+                    </label>
+                    <Input
+                      value={formData.event_name}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                        setFormData({ ...formData, event_name: e.target.value });
+                        if (formErrors.event_name) {
+                          setFormErrors({ ...formErrors, event_name: '' });
+                        }
+                      }}
+                      required
+                      placeholder="Event Name"
+                      className={`h-9 text-sm border-2 ${formErrors.event_name ? 'border-red-500' : 'border-gray-300'
+                        } focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 rounded-lg transition-all`}
+                    />
+                    {formErrors.event_name && (
+                      <p className="text-[10px] text-red-600 flex items-center gap-1">
+                        <AlertCircle className="h-2.5 w-2.5" />
+                        {formErrors.event_name}
+                      </p>
+                    )}
+                  </div>
 
-                {/* Event Category */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-700">
-                    Event Category
-                  </label>
-                  <select
-                    value={formData.event_category_id}
-                    onChange={(e) => {
-                      setFormData({ ...formData, event_category_id: parseInt(e.target.value) });
-                      if (formErrors.event_category_id) {
-                        setFormErrors({ ...formErrors, event_category_id: '' });
-                      }
-                    }}
-                    required
-                    className={`w-full h-9 rounded-lg border-2 ${formErrors.event_category_id ? 'border-red-500' : 'border-gray-300'
-                      } bg-white px-3 py-2 text-sm shadow-sm transition-all focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20`}
-                  >
-                    <option value={0}>Select a category</option>
-                    {categories.map((cat: Category) => (
-                      <option key={cat.ID} value={cat.ID}>
-                        {cat.Name}
-                      </option>
-                    ))}
-                  </select>
-                  {formErrors.event_category_id && (
-                    <p className="text-[10px] text-red-600 flex items-center gap-1">
-                      <AlertCircle className="h-2.5 w-2.5" />
-                      {formErrors.event_category_id}
-                    </p>
-                  )}
+                  {/* Event Category */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-700">
+                      Event Category
+                    </label>
+                    <select
+                      value={formData.event_category_id}
+                      onChange={(e) => {
+                        setFormData({ ...formData, event_category_id: parseInt(e.target.value) });
+                        if (formErrors.event_category_id) {
+                          setFormErrors({ ...formErrors, event_category_id: '' });
+                        }
+                      }}
+                      required
+                      className={`w-full h-9 rounded-lg border-2 ${formErrors.event_category_id ? 'border-red-500' : 'border-gray-300'
+                        } bg-white px-3 py-2 text-sm shadow-sm transition-all focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20`}
+                    >
+                      <option value={0}>Select a category</option>
+                      {categories.map((cat: Category, index: number) => (
+                        <option key={`cat-${cat.ID || index}`} value={cat.ID}>
+                          {cat.Name}
+                        </option>
+                      ))}
+                    </select>
+                    {formErrors.event_category_id && (
+                      <p className="text-[10px] text-red-600 flex items-center gap-1">
+                        <AlertCircle className="h-2.5 w-2.5" />
+                        {formErrors.event_category_id}
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
 

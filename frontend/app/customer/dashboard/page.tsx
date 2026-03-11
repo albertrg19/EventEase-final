@@ -15,8 +15,11 @@ import {
   ArrowRight,
   Loader2,
   DollarSign,
+  HelpCircle,
 } from 'lucide-react';
 import Link from 'next/link';
+import introJs from 'intro.js';
+import 'intro.js/introjs.css';
 
 interface Booking {
   id: number;
@@ -107,6 +110,51 @@ export default function CustomerDashboard() {
     }
   };
 
+  useEffect(() => {
+    const hasSeenTour = localStorage.getItem('hasSeenDashboardTour_v2');
+    if (!hasSeenTour && !loading) {
+      const timer = setTimeout(() => startTour(), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [loading]);
+
+  const startTour = () => {
+    const tour = introJs();
+    tour.setOptions({
+      steps: [
+        {
+          intro: 'Welcome to your Customer Dashboard! This guided tour will show you around.',
+          position: 'bottom'
+        },
+        {
+          element: '#stats-overview',
+          intro: 'Here you can track your total bookings, approved events, and overall expenses at a glance.',
+          position: 'bottom'
+        },
+        {
+          element: '#upcoming-events',
+          intro: 'Keep an eye on your upcoming approved events and their selected venues here.',
+          position: 'top'
+        },
+        {
+          element: '#quick-action-booking',
+          intro: 'Ready to reserve a venue? Click here to open the calendar and start a new booking request!',
+          position: 'top'
+        }
+      ],
+      showProgress: true,
+      showBullets: false,
+      exitOnOverlayClick: false,
+      exitOnEsc: false,
+      doneLabel: 'Got it!'
+    });
+
+    tour.onexit(() => localStorage.setItem('hasSeenDashboardTour_v2', 'true'));
+    tour.oncomplete(() => localStorage.setItem('hasSeenDashboardTour_v2', 'true'));
+    
+    tour.start();
+  };
+
   const stats: UserStats = useMemo(() => {
     const now = new Date();
     const upcoming = bookings.filter((b) => {
@@ -188,13 +236,23 @@ export default function CustomerDashboard() {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {/* Welcome Header */}
-      <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-2xl p-6 text-white shadow-lg">
-        <h1 className="text-3xl font-bold mb-2">Welcome back, {userName}!</h1>
-        <p className="text-blue-100">Here&apos;s an overview of your booking activity.</p>
+      <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-2xl p-6 text-white shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold mb-2">Welcome back, {userName}!</h1>
+          <p className="text-blue-100">Here&apos;s an overview of your booking activity.</p>
+        </div>
+        <Button 
+          onClick={startTour}
+          variant="secondary" 
+          className="shrink-0 bg-white/20 hover:bg-white/30 text-white border-0"
+        >
+          <HelpCircle className="w-4 h-4 mr-2" />
+          How to Reserve
+        </Button>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div id="stats-overview" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="border-0 shadow-lg bg-gradient-to-br from-blue-50 to-white">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
@@ -255,7 +313,7 @@ export default function CustomerDashboard() {
       {/* Upcoming Events & Activity */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Upcoming Events */}
-        <Card className="border-0 shadow-lg">
+        <Card id="upcoming-events" className="border-0 shadow-lg">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="flex items-center gap-2 text-lg">
               <TrendingUp className="h-5 w-5 text-blue-600" />
@@ -351,7 +409,7 @@ export default function CustomerDashboard() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Link href="/customer/booking">
+            <Link href="/customer/booking" id="quick-action-booking">
               <div className="p-4 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl text-white hover:from-blue-600 hover:to-blue-700 transition cursor-pointer">
                 <Calendar className="h-6 w-6 mb-2" />
                 <p className="font-semibold">New Booking</p>

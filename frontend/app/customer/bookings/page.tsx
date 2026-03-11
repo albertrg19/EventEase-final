@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Calendar, Eye, Printer, Info, Loader2, MoreVertical, Tag, Building2, Plus, Receipt } from 'lucide-react';
+import { Calendar, Eye, Printer, Info, Loader2, MoreVertical, Tag, Building2, Plus, Receipt, XCircle, AlertTriangle } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import Link from 'next/link';
@@ -27,6 +27,9 @@ export default function MyBookingsPage() {
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [reasonDialogOpen, setReasonDialogOpen] = useState(false);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [bookingToCancel, setBookingToCancel] = useState<Booking | null>(null);
+  const [cancelLoading, setCancelLoading] = useState(false);
   const api = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
   useEffect(() => {
@@ -77,6 +80,37 @@ export default function MyBookingsPage() {
   const handleReason = (booking: Booking) => {
     setSelectedBooking(booking);
     setReasonDialogOpen(true);
+  };
+
+  const handleCancelPrompt = (booking: Booking) => {
+    setBookingToCancel(booking);
+    setCancelDialogOpen(true);
+  };
+
+  const handleConfirmCancel = async () => {
+    if (!bookingToCancel) return;
+    setCancelLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${api}/api/bookings/${bookingToCancel.id}/cancel`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      if (res.ok) {
+        setCancelDialogOpen(false);
+        setBookingToCancel(null);
+        fetchBookings();
+      } else {
+        console.error('Failed to cancel booking');
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setCancelLoading(false);
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -212,6 +246,18 @@ export default function MyBookingsPage() {
                                 <Eye className="h-3.5 w-3.5" />
                                 View
                               </Button>
+
+                              {(booking.status === 'pending' || booking.status === 'approved') && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleCancelPrompt(booking)}
+                                  className="bg-gradient-to-r from-red-50 to-red-100 text-red-700 border-red-300 hover:from-red-100 hover:to-red-200 gap-1.5 shadow-sm hover:shadow-md transition-all transform hover:scale-105"
+                                >
+                                  <XCircle className="h-3.5 w-3.5" />
+                                  Cancel
+                                </Button>
+                              )}
                               {booking.status === 'approved' && (
                                 <>
                                   <Link href="/customer/invoices">
@@ -331,6 +377,45 @@ export default function MyBookingsPage() {
                   <span className="text-sm font-semibold text-gray-600">Hall:</span>
                   <span className="text-gray-900 font-bold">{selectedBooking.hall?.name || 'N/A'}</span>
                 </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Cancel Confirmation Dialog */}
+      <Dialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
+        <DialogContent className="max-w-md shadow-2xl border-0 rounded-2xl">
+          <DialogHeader className="bg-gradient-to-r from-red-600 to-red-700 text-white p-6 rounded-t-2xl -mt-6 -mx-6 mb-6">
+            <DialogTitle className="text-2xl font-bold flex items-center gap-2">
+              <AlertTriangle className="h-6 w-6" />
+              Cancel Booking
+            </DialogTitle>
+          </DialogHeader>
+          {bookingToCancel && (
+            <div className="space-y-6 pt-2">
+              <div className="bg-orange-50 border-2 border-orange-200 rounded-xl p-5 shadow-sm">
+                <p className="text-gray-900 font-medium">
+                  Are you sure you want to cancel your booking for <span className="font-bold text-orange-800">{bookingToCancel.event_name}</span>?
+                </p>
+                <p className="text-sm text-gray-500 mt-2">
+                  This action cannot be undone. If you cancel an approved booking, you may need to recreate it and wait for verification again.
+                </p>
+              </div>
+
+              <div className="flex gap-3 justify-end mt-4">
+                <Button variant="outline" onClick={() => setCancelDialogOpen(false)}>
+                  Keep Booking
+                </Button>
+                <Button 
+                  variant="destructive" 
+                  onClick={handleConfirmCancel}
+                  disabled={cancelLoading}
+                  className="bg-red-600 hover:bg-red-700"
+                >
+                  {cancelLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <XCircle className="h-4 w-4 mr-2" />}
+                  Yes, Cancel
+                </Button>
               </div>
             </div>
           )}
