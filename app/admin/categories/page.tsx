@@ -26,6 +26,38 @@ const stripApiPath = (apiUrl: string) => {
   }
 };
 
+const resolveImageUrl = (rawUrl: string | undefined | null, assetBase: string) => {
+  if (!rawUrl) return undefined;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('//')) {
+    return `http:${trimmed}`;
+  }
+  const ensuredBase = assetBase.replace(/\/$/, '');
+  if (trimmed.startsWith('/')) {
+    return `${ensuredBase}${trimmed}`;
+  }
+  return `${ensuredBase}/${trimmed.replace(/^\/+/, '')}`;
+};
+
+const normalizeImageForPayload = (rawUrl: string | undefined | null, assetBase: string) => {
+  if (!rawUrl) return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+  const ensuredBase = assetBase.replace(/\/$/, '');
+  if (trimmed.startsWith(ensuredBase)) {
+    const relative = trimmed.slice(ensuredBase.length);
+    return relative.startsWith('/') ? relative : `/${relative}`;
+  }
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+};
+
 export default function CategoryManagementPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
